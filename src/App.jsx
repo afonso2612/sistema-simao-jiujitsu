@@ -179,10 +179,12 @@ function normalizarTextoChave(valor) {
 }
 
 function normalizarAluno(aluno) {
+  const fotoAluno = aluno.foto || aluno.fotoUrl || aluno.foto_url || "";
+
   return {
     ...aluno,
-    foto: aluno.foto || aluno.fotoUrl || "",
-    fotoUrl: aluno.fotoUrl || aluno.foto || "",
+    foto: fotoAluno,
+    fotoUrl: fotoAluno,
     presencas: Array.isArray(aluno.presencas) ? aluno.presencas : [],
     historicoPagamentos: Array.isArray(aluno.historicoPagamentos)
       ? aluno.historicoPagamentos
@@ -191,6 +193,19 @@ function normalizarAluno(aluno) {
     mensalidade: Number(aluno.mensalidade || 0),
     vencimento: Number(aluno.vencimento || 0),
   };
+}
+
+function obterFotoAluno(aluno) {
+  return aluno?.foto || aluno?.fotoUrl || aluno?.foto_url || "";
+}
+
+function obterIniciaisAluno(nome) {
+  return String(nome || "Aluno")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((parte) => parte[0]?.toUpperCase())
+    .join("") || "A";
 }
 
 function aplicarPresencasNosAlunos(alunos, presencas) {
@@ -2925,13 +2940,26 @@ function App() {
               alunosFiltrados.map((aluno) => (
                 <CardAluno key={aluno.id}>
 
-                  {aluno.foto && (
-                    <img
-                      src={aluno.foto}
-                      alt={aluno.nome}
-                      className="fotoAlunoLista"
-                    />
-                  )}
+                  <div
+                    className="fotoAlunoCard"
+                    data-iniciais={obterIniciaisAluno(aluno.nome)}
+                  >
+                    {obterFotoAluno(aluno) ? (
+                      <img
+                        src={obterFotoAluno(aluno)}
+                        alt={aluno.nome}
+                        className="fotoAlunoLista"
+                        onError={(evento) => {
+                          evento.currentTarget.style.display = "none";
+                          evento.currentTarget
+                            .closest(".fotoAlunoCard")
+                            ?.classList.add("semFoto");
+                        }}
+                      />
+                    ) : (
+                      <span>{obterIniciaisAluno(aluno.nome)}</span>
+                    )}
+                  </div>
 
                   <h2>{aluno.nome}</h2>
                   <p>Telefone: {aluno.telefone}</p>
