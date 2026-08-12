@@ -604,18 +604,20 @@ button:disabled,
 
 /* IMAGENS */
 .fotoAlunoCard {
-  width: 100%;
-  height: 220px;
+  width: 120px;
+  height: 120px;
+  margin: 0 auto 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 16px;
+  border-radius: 14px;
   border: 2px solid var(--orange);
   overflow: hidden;
   background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(17, 24, 39, 0.95));
   color: #fbbf24;
-  font-size: 42px;
+  font-size: 34px;
   font-weight: 900;
+  flex-shrink: 0;
 }
 
 .fotoAlunoCard.semFoto::after {
@@ -1264,6 +1266,13 @@ button:disabled,
 
   .cardAluno {
     max-width: 100%;
+  }
+
+  .fotoAlunoCard {
+    width: 100px;
+    height: 100px;
+    margin-bottom: 10px;
+    font-size: 30px;
   }
 }
 
