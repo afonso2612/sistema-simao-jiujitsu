@@ -51,6 +51,14 @@ button:active,
   transform: scale(0.97);
 }
 
+button:disabled,
+.botao:disabled {
+  cursor: wait;
+  opacity: 0.65;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
 .botaoVoltar {
   background: #374151;
   color: white;
@@ -246,6 +254,10 @@ button:active,
   transform: translateX(5px);
 }
 
+.menuDesktop {
+  display: contents;
+}
+
 .conteudoSistema {
   flex: 1;
   padding: 38px;
@@ -381,7 +393,7 @@ button:active,
   border-radius: 20px;
   padding: 22px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+  transition: box-shadow 0.25s ease, border-color 0.25s ease, background 0.25s ease;
   position: relative;
   overflow: hidden;
 }
@@ -400,9 +412,8 @@ button:active,
 .cardEstatistica:hover,
 .cardAluno:hover,
 .cardDashboard:hover {
-  transform: translateY(-1px);
-  border-color: rgba(245, 158, 11, 0.20);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+  border-color: rgba(245, 158, 11, 0.22);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
 }
 
 .cardEstatistica {
@@ -454,35 +465,110 @@ button:active,
 .cardAluno button {
   width: 100%;
   margin-top: 10px;
+  box-shadow: none;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.cardAluno button:hover {
+  transform: none;
+  box-shadow: none;
+  filter: none;
+}
+
+.cardAluno button:active {
+  transform: none;
+  filter: none;
+}
+
+.cardAluno button::before,
+.cardAluno .botao::before,
+.cardAluno .botaoVoltar::before {
+  display: none;
+}
+
+.cardAluno .botao:hover::before,
+.cardAluno .botaoVoltar:hover::before {
+  left: auto;
+}
+
+.armazenamentoLocal {
+  max-width: 805px;
+  margin-top: 22px;
+}
+
+.armazenamentoLocal input[type="file"] {
+  display: none;
+}
+
+.botaoImportarBackup {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 14px 22px;
+  border-radius: 12px;
+  background: #1f2937;
+  color: #fff;
+  font-weight: bold;
+  cursor: pointer;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+}
+
+.botaoImportarBackup:hover {
+  background: #374151;
+  transform: translateY(-3px);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.32);
+}
+
+.alertaArmazenamento {
+  color: #fef3c7 !important;
+  background: rgba(245, 158, 11, 0.18) !important;
+  border-color: rgba(245, 158, 11, 0.42) !important;
+}
+
+.statusBancoLocal,
+.statusBancoOnline {
+  font-weight: bold;
+}
+
+.statusBancoLocal {
+  color: #fde68a !important;
+  background: rgba(245, 158, 11, 0.14) !important;
+  border-color: rgba(245, 158, 11, 0.34) !important;
+}
+
+.statusBancoOnline {
+  color: #bbf7d0 !important;
+  background: rgba(34, 197, 94, 0.14) !important;
+  border-color: rgba(34, 197, 94, 0.34) !important;
 }
 
 .iconeCard {
   font-size: 32px;
   display: block;
   margin-bottom: 10px;
-  filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.42));
+  filter: none;
 }
 
 .cardEstatistica.pagas,
 .cardEstatistica.pagamentos,
 .cardEstatistica.presenças {
   border-color: rgba(34, 197, 94, 0.65);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35), 0 0 16px rgba(34, 197, 94, 0.16);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
 }
 
 .cardEstatistica.pendentes {
   border-color: rgba(249, 115, 22, 0.65);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35), 0 0 16px rgba(249, 115, 22, 0.16);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
 }
 
 .cardEstatistica.vencidas {
   border-color: rgba(239, 68, 68, 0.65);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35), 0 0 16px rgba(239, 68, 68, 0.16);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
 }
 
 .cardEstatistica.alunos {
   border-color: rgba(59, 130, 246, 0.65);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35), 0 0 16px rgba(59, 130, 246, 0.16);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
 }
 
 .cardsDashboard button {
@@ -531,6 +617,78 @@ button:active,
   object-fit: cover;
   border-radius: 16px;
   border: 2px solid var(--orange);
+}
+
+.areaPreviewFoto {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.opcoesFotoAluno {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.opcoesFotoAluno input {
+  display: none;
+}
+
+.botaoArquivoFoto {
+  min-width: 160px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: #111827;
+  color: white;
+  border: 1px solid var(--orange);
+  text-align: center;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.botaoRemoverFoto {
+  max-width: 220px;
+  background: var(--red);
+  color: white;
+}
+
+.botaoDadosCompletos {
+  background: rgba(245, 158, 11, 0.12) !important;
+  color: #fbbf24 !important;
+  border: 1px solid rgba(245, 158, 11, 0.35) !important;
+}
+
+.dadosCompletosAluno {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px 12px;
+  margin: 10px 0 14px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+}
+
+.dadosCompletosAluno p {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.botaoVoltarPortalAluno {
+  display: block;
+  max-width: 320px;
+  margin: 0 auto 18px;
 }
 
 /* FORMULÁRIO */
@@ -591,7 +749,7 @@ button:active,
 }
 
 .carteirinha::before {
-  content: "ARIRAMBA";
+  content: "SIMÃO TEAM";
   position: absolute;
   top: 32px;
   left: 245px;
@@ -658,16 +816,25 @@ button:active,
   z-index: 2;
   width: 105px;
   height: 105px;
+  box-sizing: border-box;
   background: white;
   color: black;
   border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
+  justify-self: center;
+  align-self: end;
   text-align: center;
   font-size: 15px;
   font-weight: 900;
   margin-bottom: 88px;
+}
+
+.qrcodeFake canvas {
+  display: block;
+  max-width: 92px;
+  max-height: 92px;
 }
 
 .areaCarteirinha>button {
@@ -698,6 +865,74 @@ button:active,
   max-width: 180px;
   border-radius: 10px;
   margin-top: 8px;
+}
+
+.imagemComprovante {
+  width: 100%;
+  max-width: 220px;
+  height: auto;
+  max-height: 260px;
+  object-fit: contain;
+  display: block;
+  margin: 10px auto 0;
+  cursor: pointer;
+  border: 2px solid var(--orange);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.arquivoComprovante {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+  font-weight: 800;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.avisoSemComprovante {
+  margin-top: 10px;
+  color: #facc15;
+  font-weight: 800;
+}
+
+.areaComprovanteAluno {
+  width: 100%;
+  margin-top: 16px;
+  text-align: center;
+}
+
+.botaoArquivoComprovante {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 52px;
+  margin: 12px 0;
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: var(--orange);
+  color: #000;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.botaoArquivoComprovante input {
+  display: none;
+}
+
+.lista .cardAluno,
+.lista .cardAluno:hover,
+.lista .cardEstatistica,
+.lista .cardEstatistica:hover {
+  transform: none !important;
+  animation: none !important;
+  transition: none !important;
 }
 
 .modalComprovante {
@@ -827,6 +1062,10 @@ button:active,
 
 /* RESPONSIVO */
 @media (max-width: 900px) {
+  .menuDesktop {
+    display: none;
+  }
+
   .layoutSistema {
     display: block;
     min-height: 100vh;
@@ -882,11 +1121,19 @@ button:active,
     font-size: 32px;
   }
 
+  .areaCarteirinha {
+    justify-content: flex-start;
+    overflow-y: auto;
+    padding: 18px 12px 96px;
+  }
+
   .carteirinha {
     grid-template-columns: 1fr;
     text-align: center;
-    width: 430px;
+    width: min(430px, 92vw);
     min-height: auto;
+    padding: 18px 16px;
+    gap: 12px;
   }
 
   .carteirinha::before,
@@ -896,11 +1143,43 @@ button:active,
 
   .infoCarteirinha {
     padding-top: 0;
+    padding-bottom: 0;
     text-align: center;
+  }
+
+  .logoCarteirinha {
+    width: 82px;
+  }
+
+  .fotoCarteirinha {
+    width: 145px;
+    height: 145px;
+  }
+
+  .ladoFoto {
+    gap: 10px;
+  }
+
+  .faixaMini {
+    width: 130px;
+  }
+
+  .infoCarteirinha h2 {
+    font-size: 21px;
+    margin-bottom: 12px;
+  }
+
+  .infoCarteirinha p {
+    font-size: 15px;
+    margin-bottom: 5px;
+    overflow-wrap: anywhere;
   }
 
   .qrcodeFake {
     margin: 0 auto;
+    align-self: center;
+    width: 100px;
+    height: 100px;
   }
 }
 
@@ -974,19 +1253,22 @@ button:active,
 .heroPainel,
 .cardsDashboard button {
   transition:
-    transform 0.25s ease,
     box-shadow 0.25s ease,
-    border-color 0.25s ease;
+    border-color 0.25s ease,
+    background 0.25s ease;
 }
 
 .cardEstatistica:hover,
-.cardAluno:hover,
-.heroPainel:hover {
-  transform: translateY(-5px);
+.cardAluno:hover {
   box-shadow:
-    0 12px 35px rgba(0, 0, 0, 0.45),
-    0 0 22px rgba(245, 158, 11, 0.22);
-  border-color: rgba(245, 158, 11, 0.45);
+    0 8px 30px rgba(0, 0, 0, 0.35);
+  border-color: rgba(245, 158, 11, 0.22);
+}
+
+.heroPainel:hover {
+  box-shadow:
+    0 12px 35px rgba(0, 0, 0, 0.45);
+  border-color: rgba(245, 158, 11, 0.24);
 }
 
 .cardsDashboard button:hover {
@@ -997,7 +1279,7 @@ button:active,
 }
 
 .iconeCard {
-  filter: drop-shadow(0 0 10px rgba(245, 158, 11, 0.55));
+  filter: none;
 }
 
 .statusOnline {
@@ -1040,6 +1322,7 @@ button:active,
 .botao::before,
 .botaoVoltar::before {
   content: "";
+  pointer-events: none;
 
   position: absolute;
   top: 0;
@@ -1196,6 +1479,40 @@ button:active,
   body {
     overscroll-behavior: none !important;
   }
+}
+
+.cardAluno,
+.cardAluno:hover {
+  transform: none !important;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35) !important;
+  transition: none !important;
+}
+
+.cardAluno::before {
+  display: none !important;
+}
+
+.cardAluno button,
+.cardAluno button:hover,
+.cardAluno button:active,
+.cardAluno .botao,
+.cardAluno .botao:hover,
+.cardAluno .botao:active,
+.cardAluno .botaoVoltar,
+.cardAluno .botaoVoltar:hover,
+.cardAluno .botaoVoltar:active {
+  transform: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+  transition: none !important;
+}
+
+.cardAluno button::before,
+.cardAluno .botao::before,
+.cardAluno .botaoVoltar::before {
+  content: none !important;
+  display: none !important;
+  transition: none !important;
 }
 
 .fundoMenuMobile {

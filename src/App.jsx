@@ -2,9 +2,445 @@ import "./App.css";
 import logo from "./assets/logo.webp";
 import { useState, useEffect } from "react";
 import { QRCodeCanvas } from "qrcode.react";
-import { Html5QrcodeScanner } from "html5-qrcode";
+import { Html5Qrcode } from "html5-qrcode";
 import capa from "./assets/capa.webp";
 import jsPDF from "jspdf";
+import { supabase, supabaseConfigurado } from "./lib/supabaseClient";
+import { entrarComEmailSenha, obterPerfilSupabase, sairDoSupabase } from "./services/supabaseAuth";
+import {
+  buscarUsuarioSistemaOnline,
+  confirmarPagamentoOnline,
+  listarAlunosOnline,
+  listarPagamentosOnline,
+  listarPresencasOnline,
+  migrarAlunosOnline,
+  obterAlunoDoUsuarioOnline,
+  obterAlunoOnline,
+  obterFotoAlunoOnline,
+  registrarPresencaOnline,
+  removerAlunoOnline,
+  removerUsuarioSistemaOnlinePorAluno,
+  salvarAlunoOnline,
+  salvarPagamentoOnline,
+  salvarUsuarioSistemaOnline,
+} from "./services/supabaseStore";
+
+const APP_NAME = "Simão Tavares Top Team";
+
+const STORAGE_KEYS = {
+  alunos: "alunos_simao_tavares_top_team",
+  presencas: "presencas_simao_tavares_top_team",
+  avisos: "avisos_simao_tavares_top_team",
+  usuarios: "usuarios_simao_tavares_top_team",
+  usuarioLogado: "usuario_logado_simao_tavares_top_team",
+};
+
+const CHAVES_ALUNOS_LOCAIS = [
+  STORAGE_KEYS.alunos,
+  "alunos_Simão Tvarares Top Team",
+  "alunos_SimÃ£o Tvarares Top Team",
+  "alunos_SimÃƒÂ£o Tvarares Top Team",
+  "alunos_Simao Tvarares Top Team",
+];
+
+const CHAVES_PRESENCAS_LOCAIS = [
+  STORAGE_KEYS.presencas,
+  "presencas_Simão Tvarares Top Team",
+  "presencas_SimÃ£o Tvarares Top Team",
+  "presencas_SimÃƒÂ£o Tvarares Top Team",
+  "presencas_Simao Tvarares Top Team",
+  "presencas_ariramba",
+];
+
+const CHAVES_USUARIOS_LOCAIS = [
+  STORAGE_KEYS.usuarios,
+  "usuarios_Simão Tvarares Top Team",
+  "usuarios_SimÃ£o Tvarares Top Team",
+  "usuarios_SimÃƒÂ£o Tvarares Top Team",
+  "usuarios_Simao Tvarares Top Team",
+  "usuarios_ariramba",
+];
+
+function recuperarDadosSalvos(chaves, valorPadrao) {
+  for (const chave of chaves) {
+    const dados = localStorage.getItem(chave);
+
+    if (dados) {
+      try {
+        return JSON.parse(dados);
+      } catch (error) {
+        console.warn(`Dados inválidos em ${chave}. Tentando próxima chave.`, error);
+      }
+    }
+  }
+
+  return valorPadrao;
+}
+
+function recuperarListasSalvas(chaves) {
+  const itens = [];
+
+  chaves.forEach((chave) => {
+    const dados = localStorage.getItem(chave);
+
+    if (!dados) return;
+
+    try {
+      const lista = JSON.parse(dados);
+
+      if (Array.isArray(lista)) {
+        itens.push(...lista);
+      }
+    } catch (error) {
+      console.warn(`Dados inválidos em ${chave}. Ignorando esta lista.`, error);
+    }
+  });
+
+  return itens;
+}
+
+function salvarDados(chave, valor) {
+  try {
+    localStorage.setItem(chave, JSON.stringify(valor));
+    return true;
+  } catch (error) {
+    console.error(`Não foi possível salvar ${chave}.`, error);
+    return false;
+  }
+}
+
+function lerArquivoComoDataURL(arquivo) {
+  return new Promise((resolve, reject) => {
+    const leitor = new FileReader();
+    leitor.onloadend = () => resolve(leitor.result);
+    leitor.onerror = () => reject(leitor.error || new Error("Erro ao ler arquivo."));
+    leitor.readAsDataURL(arquivo);
+  });
+}
+
+async function selecionarFotoDoArquivo(evento, setFoto) {
+  const arquivo = evento.target.files?.[0];
+
+  if (!arquivo) return;
+
+  try {
+    setFoto(await lerArquivoComoDataURL(arquivo));
+  } catch (error) {
+    console.error("Erro ao carregar foto.", error);
+    alert("Nao foi possivel carregar a foto selecionada.");
+  } finally {
+    evento.target.value = "";
+  }
+}
+
+function FotoAlunoInputs({ foto, setFoto, idBase = "foto-aluno" }) {
+  return (
+    <div className="opcoesFotoAluno">
+      <label className="botaoArquivoFoto" htmlFor={`${idBase}-camera`}>
+        Tirar foto
+      </label>
+      <input
+        id={`${idBase}-camera`}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={(evento) => selecionarFotoDoArquivo(evento, setFoto)}
+      />
+
+      <label className="botaoArquivoFoto" htmlFor={`${idBase}-galeria`}>
+        Escolher da galeria
+      </label>
+      <input
+        id={`${idBase}-galeria`}
+        type="file"
+        accept="image/*"
+        onChange={(evento) => selecionarFotoDoArquivo(evento, setFoto)}
+      />
+
+      {foto && (
+        <button
+          type="button"
+          className="botaoRemoverFoto"
+          onClick={() => setFoto("")}
+        >
+          Remover foto
+        </button>
+      )}
+    </div>
+  );
+}
+
+function normalizarTextoChave(valor) {
+  return String(valor || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizarAluno(aluno) {
+  return {
+    ...aluno,
+    foto: aluno.foto || aluno.fotoUrl || "",
+    fotoUrl: aluno.fotoUrl || aluno.foto || "",
+    presencas: Array.isArray(aluno.presencas) ? aluno.presencas : [],
+    historicoPagamentos: Array.isArray(aluno.historicoPagamentos)
+      ? aluno.historicoPagamentos
+      : [],
+    statusPagamento: aluno.statusPagamento || "Pendente",
+    mensalidade: Number(aluno.mensalidade || 0),
+    vencimento: Number(aluno.vencimento || 0),
+  };
+}
+
+function aplicarPresencasNosAlunos(alunos, presencas) {
+  return alunos.map((aluno) => ({
+    ...aluno,
+    presencas: presencas
+      .filter((presenca) => presenca.alunoId === aluno.id)
+      .map((presenca) => ({
+        data: presenca.data,
+        hora: presenca.hora,
+      })),
+  }));
+}
+
+function completarPresencasComAlunos(presencas, alunos) {
+  const alunosPorId = new Map(
+    alunos.map((aluno) => [String(aluno.id), aluno])
+  );
+
+  return presencas.map((presenca) => {
+    const aluno = alunosPorId.get(String(presenca.alunoId));
+
+    return {
+      ...presenca,
+      nome: presenca.nome || aluno?.nome || "",
+      foto: presenca.foto || aluno?.foto || "",
+    };
+  });
+}
+
+function dataISOParaBrasil(data) {
+  if (!data) return "";
+  if (data.includes("/")) return data;
+
+  const partes = data.split("-");
+  if (partes.length !== 3) return data;
+
+  return partes.reverse().join("/");
+}
+
+function dataPagamentoParaTempo(pagamento) {
+  return new Date(pagamento.criado_em || pagamento.data_pagamento || 0).getTime();
+}
+
+function obterUltimoPagamentoDoAluno(pagamentos, idAluno) {
+  return pagamentos
+    .filter((pagamento) => String(pagamento.aluno_id) === String(idAluno))
+    .sort((a, b) => dataPagamentoParaTempo(b) - dataPagamentoParaTempo(a))[0];
+}
+
+function comprovanteEhImagem(comprovante) {
+  return typeof comprovante === "string" && comprovante.startsWith("data:image/");
+}
+
+function abrirArquivoComprovante(comprovante) {
+  if (!comprovante) return;
+
+  if (!comprovante.startsWith("data:")) {
+    window.open(comprovante, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  const [cabecalho, base64] = comprovante.split(",");
+  const tipoArquivo =
+    cabecalho.match(/^data:(.*?);base64$/)?.[1] || "application/octet-stream";
+
+  try {
+    const binario = atob(base64);
+    const bytes = new Uint8Array(binario.length);
+
+    for (let i = 0; i < binario.length; i += 1) {
+      bytes[i] = binario.charCodeAt(i);
+    }
+
+    const blob = new Blob([bytes], { type: tipoArquivo });
+    const url = URL.createObjectURL(blob);
+    const janela = window.open(url, "_blank", "noopener,noreferrer");
+
+    if (!janela) {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = tipoArquivo.includes("pdf")
+        ? "comprovante.pdf"
+        : "comprovante";
+      link.click();
+    }
+
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (error) {
+    console.error("Erro ao abrir comprovante.", error);
+    alert("Não foi possível abrir o comprovante. Tente baixar ou reenviar o arquivo.");
+  }
+}
+
+function carregarImagem(src) {
+  return new Promise((resolve, reject) => {
+    const imagem = new Image();
+    imagem.onload = () => resolve(imagem);
+    imagem.onerror = reject;
+    imagem.src = src;
+  });
+}
+
+async function prepararFotoCarteirinha(src) {
+  const imagem = await carregarImagem(src);
+  const tamanho = 320;
+  const fotoDeitada = imagem.width > imagem.height;
+  const larguraOrigem = fotoDeitada ? imagem.height : imagem.width;
+  const alturaOrigem = fotoDeitada ? imagem.width : imagem.height;
+  const canvas = document.createElement("canvas");
+  const contexto = canvas.getContext("2d");
+  canvas.width = tamanho;
+  canvas.height = tamanho;
+
+  const escala = Math.max(tamanho / larguraOrigem, tamanho / alturaOrigem);
+  const largura = larguraOrigem * escala;
+  const altura = alturaOrigem * escala;
+  const x = (tamanho - largura) / 2;
+  const y = (tamanho - altura) / 2;
+
+  contexto.fillStyle = "#111827";
+  contexto.fillRect(0, 0, tamanho, tamanho);
+
+  if (fotoDeitada) {
+    contexto.save();
+    contexto.translate(tamanho / 2, tamanho / 2);
+    contexto.rotate(Math.PI / 2);
+    contexto.drawImage(imagem, -altura / 2, -largura / 2, altura, largura);
+    contexto.restore();
+  } else {
+    contexto.drawImage(imagem, x, y, largura, altura);
+  }
+
+  return canvas.toDataURL("image/jpeg", 0.9);
+}
+
+function aplicarPagamentosNosAlunos(alunos, pagamentos) {
+  return alunos.map((aluno) => {
+    const pagamentosDoAluno = pagamentos.filter(
+      (pagamento) => String(pagamento.aluno_id) === String(aluno.id)
+    );
+    const pagos = pagamentosDoAluno
+      .filter((pagamento) => pagamento.status === "Pago")
+      .sort((a, b) => dataPagamentoParaTempo(b) - dataPagamentoParaTempo(a));
+    const ultimoPagamento = obterUltimoPagamentoDoAluno(pagamentos, aluno.id);
+    const aguardando =
+      ultimoPagamento?.status === "Aguardando" ? ultimoPagamento : null;
+    const ultimoComprovante = pagamentosDoAluno
+      .filter((pagamento) => pagamento.comprovante_url)
+      .sort((a, b) => dataPagamentoParaTempo(b) - dataPagamentoParaTempo(a))[0];
+    const ultimoPago = pagos[0];
+
+    return {
+      ...aluno,
+      statusPagamento: ultimoPago ? "Pago" : ultimoPagamento?.status || aluno.statusPagamento,
+      comprovantePagamento:
+        aguardando?.comprovante_url ||
+        ultimoComprovante?.comprovante_url ||
+        aluno.comprovantePagamento,
+      dataEnvioComprovante:
+        dataISOParaBrasil(aguardando?.data_pagamento) ||
+        dataISOParaBrasil(ultimoComprovante?.data_pagamento) ||
+        aluno.dataEnvioComprovante,
+      ultimoPagamento: dataISOParaBrasil(ultimoPago?.data_pagamento) || aluno.ultimoPagamento,
+      historicoPagamentos: pagos.map((pagamento) => ({
+        data: dataISOParaBrasil(pagamento.data_pagamento),
+        valor: Number(pagamento.valor || 0),
+      })),
+    };
+  });
+}
+
+function mesclarAlunosPreservandoLocais(alunosAtuais, alunosRecebidos) {
+  const alunosPorId = new Map(
+    alunosAtuais.map((aluno) => [String(aluno.id), normalizarAluno(aluno)])
+  );
+
+  alunosRecebidos.forEach((alunoRecebido) => {
+    const alunoNormalizado = normalizarAluno(alunoRecebido);
+    const alunoAtual = alunosPorId.get(String(alunoNormalizado.id));
+
+    alunosPorId.set(String(alunoNormalizado.id), {
+      ...alunoAtual,
+      ...alunoNormalizado,
+      foto: alunoNormalizado.foto || alunoAtual?.foto || alunoNormalizado.fotoUrl || "",
+      fotoUrl: alunoNormalizado.fotoUrl || alunoAtual?.fotoUrl || "",
+      comprovantePagamento:
+        alunoNormalizado.comprovantePagamento ||
+        alunoAtual?.comprovantePagamento ||
+        "",
+      dataEnvioComprovante:
+        alunoNormalizado.dataEnvioComprovante ||
+        alunoAtual?.dataEnvioComprovante ||
+        "",
+    });
+  });
+
+  return Array.from(alunosPorId.values()).sort((a, b) =>
+    String(a.nome || "").localeCompare(String(b.nome || ""), "pt-BR", {
+      sensitivity: "base",
+    })
+  );
+}
+
+function criarUsuarioAluno(nome, usuarios) {
+  const base =
+    nome
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ".")
+      .replace(/^\.+|\.+$/g, "") || "aluno";
+  let usuario = base;
+  let contador = 1;
+
+  while (
+    usuarios.some(
+      (usuarioCadastrado) =>
+        usuarioCadastrado.usuario.toLowerCase() === usuario.toLowerCase()
+    )
+  ) {
+    contador += 1;
+    usuario = `${base}${contador}`;
+  }
+
+  return usuario;
+}
+
+function criarIdAluno() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+
+  return `local-${Date.now()}`;
+}
+
+function idAlunoOnlineValido(id) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(id || "")
+  );
+}
+
+function limitarTempo(promise, tempoMs, mensagem) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(mensagem)), tempoMs)
+    ),
+  ]);
+}
 
 function App() {
   const [tela, setTela] = useState("inicio");
@@ -15,9 +451,7 @@ function App() {
   const [usuarioLogado, setUsuarioLogado] = useState(null);
 
   const [avisos, setAvisos] = useState(() => {
-    const avisosSalvos = localStorage.getItem("avisos_ariramba");
-
-    return avisosSalvos ? JSON.parse(avisosSalvos) : [];
+    return recuperarDadosSalvos([STORAGE_KEYS.avisos, "avisos_ariramba"], []);
   });
   function adicionarAviso(mensagem) {
     const novoAviso = {
@@ -29,12 +463,24 @@ function App() {
     setAvisos((prev) => [novoAviso, ...prev]);
   }
 
-  const [usuarios, setUsuarios] = useState(() => {
-    const usuariosSalvos = localStorage.getItem("usuarios_ariramba");
+  function criarAcessoAluno({ id = Date.now(), usuario, senha, nome, alunoId, academiaId }) {
+    return {
+      id,
+      usuario,
+      senha,
+      cargo: "aluno",
+      nome,
+      alunoId,
+      academiaId,
+    };
+  }
 
-    return usuariosSalvos
-      ? JSON.parse(usuariosSalvos)
-      : [
+  const [usuarios, setUsuarios] = useState(() => {
+    if (supabaseConfigurado) return [];
+
+    return recuperarDadosSalvos(
+      [STORAGE_KEYS.usuarios, "usuarios_ariramba"],
+      [
         {
           id: 1,
           usuario: "admin",
@@ -59,7 +505,8 @@ function App() {
           nome: "Aluno Teste",
           alunoId: 1779419714987,
         },
-      ];
+      ]
+    );
   });
   const [nome, setNome] = useState("");
   const [dataInicio, setDataInicio] = useState("");
@@ -85,16 +532,32 @@ function App() {
   const [menuAberto, setMenuAberto] = useState(false);
   const [mostrarCarteirinhaAluno, setMostrarCarteirinhaAluno] = useState(false);
   const [mostrarHistoricoAluno, setMostrarHistoricoAluno] = useState(false);
+  const [mostrarDadosPortalAluno, setMostrarDadosPortalAluno] = useState(false);
   const [modoEditarPerfil, setModoEditarPerfil] = useState(false);
+  const [erroArmazenamento, setErroArmazenamento] = useState("");
   const [especialidadeProfessor, setEspecialidadeProfessor] = useState("");
   const [graduacaoProfessor, setGraduacaoProfessor] = useState("");
   const [novaSenha, setNovaSenha] = useState("");
   const [confirmarSenha, setConfirmarSenha] = useState("");
   const [busca, setBusca] = useState("");
+  const [alunoDadosAberto, setAlunoDadosAberto] = useState(null);
   const [alunoEditando, setAlunoEditando] = useState(null);
+  const [sincronizacaoOnline, setSincronizacaoOnline] = useState("");
+  const [loginEmAndamento, setLoginEmAndamento] = useState(false);
+  const [salvandoAluno, setSalvandoAluno] = useState(false);
   const [horaAtual, setHoraAtual] = useState(
     new Date().toLocaleTimeString()
   );
+  const diretorOnlineLogado =
+    supabaseConfigurado &&
+    tipoUsuario === "diretor" &&
+    (usuarioLogado?.origem === "supabase" ||
+      usuarioLogado?.origem === "usuarios_sistema");
+  const usuarioOnlineLogado =
+    supabaseConfigurado &&
+    (usuarioLogado?.origem === "supabase" ||
+      usuarioLogado?.origem === "usuarios_sistema");
+  const modoLocalAtivo = !supabaseConfigurado;
 
   useEffect(() => {
     if (menuAberto) {
@@ -109,66 +572,82 @@ function App() {
   }, [menuAberto]);
 
   const [alunos, setAlunos] = useState(() => {
-    const dadosSalvos = localStorage.getItem("alunos_Simão Tvarares Top Team");
-    return dadosSalvos ? JSON.parse(dadosSalvos) : [];
+    if (supabaseConfigurado) return [];
+
+    const alunosSalvos = recuperarDadosSalvos(CHAVES_ALUNOS_LOCAIS, []);
+
+    return alunosSalvos.map(normalizarAluno);
   });
 
   const [presencas, setPresencas] = useState(() => {
-    const presencasSalvas = localStorage.getItem("presencas_Simão Tvarares Top Team");
-    return presencasSalvas ? JSON.parse(presencasSalvas) : [];
+    if (supabaseConfigurado) return [];
+
+    return recuperarDadosSalvos(CHAVES_PRESENCAS_LOCAIS, []);
   });
+  const [pagamentos, setPagamentos] = useState([]);
+
+  async function carregarDadosOnlineNoEstado() {
+    const [alunosOnline, presencasOnline, pagamentosOnline] = await Promise.all([
+      listarAlunosOnline(),
+      listarPresencasOnline(),
+      listarPagamentosOnline(),
+    ]);
+
+    const alunosNormalizados = alunosOnline.map(normalizarAluno);
+    const presencasComAlunos = completarPresencasComAlunos(
+      presencasOnline,
+      alunosNormalizados
+    );
+
+    setPresencas(presencasComAlunos);
+    setPagamentos(pagamentosOnline);
+
+    const alunosOnlineComDados = aplicarPagamentosNosAlunos(
+      aplicarPresencasNosAlunos(alunosNormalizados, presencasComAlunos),
+      pagamentosOnline
+    );
+
+    setAlunos(alunosOnlineComDados);
+    return alunosOnlineComDados;
+  }
 
   function ContadorAnimado({ valor }) {
-    const [numero, setNumero] = useState(0);
-
-    useEffect(() => {
-      let inicio = 0;
-      const fim = Number(valor) || 0;
-      const duracao = 800;
-      const incremento = Math.max(1, Math.ceil(fim / 30));
-
-      const intervalo = setInterval(() => {
-        inicio += incremento;
-
-        if (inicio >= fim) {
-          setNumero(fim);
-          clearInterval(intervalo);
-        } else {
-          setNumero(inicio);
-        }
-      }, duracao / 30);
-
-      return () => clearInterval(intervalo);
-    }, [valor]);
-
-    return <>{numero}</>;
+    return <>{Number(valor) || 0}</>;
   }
 
   useEffect(() => {
-    localStorage.setItem("alunos_Simão Tvarares Top Team", JSON.stringify(alunos));
-  }, [alunos]);
+    if (!modoLocalAtivo) return;
+
+    if (salvarDados(STORAGE_KEYS.alunos, alunos)) {
+      setErroArmazenamento("");
+    } else {
+      setErroArmazenamento("Não foi possível salvar os alunos. Faça um backup e reduza fotos muito pesadas.");
+    }
+  }, [alunos, modoLocalAtivo]);
 
   useEffect(() => {
-    localStorage.setItem("presencas_ariramba", JSON.stringify(presencas));
-  }, [presencas]);
+    if (!modoLocalAtivo) return;
+
+    if (!salvarDados(STORAGE_KEYS.presencas, presencas)) {
+      setErroArmazenamento("Não foi possível salvar o histórico de presenças.");
+    }
+  }, [presencas, modoLocalAtivo]);
 
   useEffect(() => {
-    localStorage.setItem("avisos_ariramba", JSON.stringify(avisos));
+    salvarDados(STORAGE_KEYS.avisos, avisos);
   }, [avisos]);
 
   useEffect(() => {
-    localStorage.setItem(
-      "usuarios_ariramba",
-      JSON.stringify(usuarios)
-    );
-  }, [usuarios]);
+    if (!modoLocalAtivo) return;
+
+    if (!salvarDados(STORAGE_KEYS.usuarios, usuarios)) {
+      setErroArmazenamento("Não foi possível salvar os usuários de acesso.");
+    }
+  }, [usuarios, modoLocalAtivo]);
 
   useEffect(() => {
     if (usuarioLogado) {
-      localStorage.setItem(
-        "usuario_logado_ariramba",
-        JSON.stringify(usuarioLogado)
-      );
+      salvarDados(STORAGE_KEYS.usuarioLogado, usuarioLogado);
     }
   }, [usuarioLogado]);
 
@@ -184,10 +663,21 @@ function App() {
   }, [tela, tipoUsuario]);
 
   useEffect(() => {
-    const usuarioSalvo = localStorage.getItem("usuario_logado_ariramba");
+    const usuarioSalvo =
+      localStorage.getItem(STORAGE_KEYS.usuarioLogado) ||
+      localStorage.getItem("usuario_logado_ariramba");
 
     if (usuarioSalvo) {
-      const usuarioRecuperado = JSON.parse(usuarioSalvo);
+      let usuarioRecuperado;
+
+      try {
+        usuarioRecuperado = JSON.parse(usuarioSalvo);
+      } catch (error) {
+        console.warn("Sessão salva inválida. Login será solicitado novamente.", error);
+        localStorage.removeItem(STORAGE_KEYS.usuarioLogado);
+        localStorage.removeItem("usuario_logado_ariramba");
+        return;
+      }
 
       setUsuarioLogado(usuarioRecuperado);
       setTipoUsuario(usuarioRecuperado.cargo);
@@ -206,69 +696,257 @@ function App() {
   useEffect(() => {
     if (tela !== "scanner") return;
 
-    const scanner = new Html5QrcodeScanner(
-      "reader",
-      {
-        fps: 10,
-        qrbox: { width: 250, height: 250 },
-        supportedScanTypes: [],
-        videoConstraints: {
-          facingMode: "environment",
-        },
-      },
-      false
-    );
-    scanner.render(
-      (resultado) => {
-        const alunoEncontrado = alunos.find(
-          (a) => `aluno-${a.id}` === resultado
-        );
+    const scanner = new Html5Qrcode("reader");
+    let leituraEmAndamento = false;
+    let scannerAtivo = true;
 
-        if (alunoEncontrado) {
-          const hoje = new Date().toLocaleDateString();
+    const liberarScanner = () => {
+      setTimeout(() => {
+        leituraEmAndamento = false;
+      }, 1800);
+    };
 
-          const jaRegistrou = presencas.some(
-            (presenca) =>
-              presenca.nome === alunoEncontrado.nome &&
-              presenca.data === hoje
+    const processarQrCode = async (resultado) => {
+      if (leituraEmAndamento) return;
+      leituraEmAndamento = true;
+
+      const codigoLido = String(resultado || "").trim();
+      let presencasParaBusca = presencas;
+      let alunoEncontrado = alunos.find(
+        (aluno) => `aluno-${aluno.id}` === codigoLido
+      );
+
+      if (!alunoEncontrado && supabaseConfigurado) {
+        try {
+          const [alunosOnline, presencasOnline, pagamentosOnline] = await Promise.all([
+            listarAlunosOnline(),
+            listarPresencasOnline(),
+            listarPagamentosOnline(),
+          ]);
+          const alunosNormalizados = alunosOnline.map(normalizarAluno);
+          const presencasComAlunos = completarPresencasComAlunos(
+            presencasOnline,
+            alunosNormalizados
+          );
+          const alunosOnlineComDados = aplicarPagamentosNosAlunos(
+            aplicarPresencasNosAlunos(alunosNormalizados, presencasComAlunos),
+            pagamentosOnline
           );
 
-          if (jaRegistrou) {
-            alert("Aluno já registrou presença hoje ⚠️");
-            return;
+          presencasParaBusca = presencasComAlunos;
+          if (scannerAtivo) {
+            setAlunos(alunosOnlineComDados);
+            setPresencas(presencasComAlunos);
+            setPagamentos(pagamentosOnline);
           }
-          const novaPresenca = {
-            nome: alunoEncontrado.nome,
-            foto: alunoEncontrado.foto,
-            data: new Date().toLocaleDateString(),
-            hora: new Date().toLocaleTimeString(),
-          };
 
-          setPresencas((prev) => [...prev, novaPresenca]);
-
-          alert("Presença registrada para " + alunoEncontrado.nome);
+          alunoEncontrado = alunosOnlineComDados.find(
+            (aluno) => `aluno-${aluno.id}` === codigoLido
+          );
+        } catch (error) {
+          console.error("Erro ao buscar aluno do QR online.", error);
         }
-      },
-      (erro) => {
-        console.log(erro);
       }
-    );
+
+      if (!alunoEncontrado) {
+        alert("QR Code lido, mas aluno nao encontrado. Confira se esta usando a carteirinha gerada por este sistema.");
+        liberarScanner();
+        return;
+      }
+
+      const diaVencimento = Number(alunoEncontrado.vencimento || 0);
+
+      if (
+        alunoEncontrado.statusPagamento !== "Pago" &&
+        diaVencimento > 0 &&
+        new Date().getDate() > diaVencimento
+      ) {
+        const multa = 10;
+        const jurosPorDia = 1;
+        const diasAtraso = new Date().getDate() - diaVencimento;
+        const valorAtualizado =
+          Number(alunoEncontrado.mensalidade || 0) + multa + diasAtraso * jurosPorDia;
+        const valorAtualizadoFormatado = Number(valorAtualizado || 0).toLocaleString("pt-BR", {
+          style: "currency",
+          currency: "BRL",
+        });
+
+        alert(
+          `Presenca bloqueada.\n\n${alunoEncontrado.nome} esta com mensalidade vencida.\nValor atualizado: ${valorAtualizadoFormatado}`
+        );
+        liberarScanner();
+        return;
+      }
+
+      const hoje = new Date().toLocaleDateString();
+
+      const jaRegistrou = presencasParaBusca.some(
+        (presenca) =>
+          (String(presenca.alunoId) === String(alunoEncontrado.id) ||
+            presenca.nome === alunoEncontrado.nome) &&
+          presenca.data === hoje
+      );
+
+      if (jaRegistrou) {
+        alert("Aluno ja registrou presenca hoje.");
+        liberarScanner();
+        return;
+      }
+
+      const novaPresenca = {
+        alunoId: alunoEncontrado.id,
+        nome: alunoEncontrado.nome,
+        foto: alunoEncontrado.foto,
+        data: new Date().toLocaleDateString(),
+        hora: new Date().toLocaleTimeString(),
+      };
+
+      if (diretorOnlineLogado) {
+        try {
+          await registrarPresencaOnline(novaPresenca);
+        } catch (error) {
+          console.error("Erro ao registrar presenca online.", error);
+          alert(`Nao foi possivel enviar a presenca ao banco online.\n\nErro: ${error.message}`);
+          liberarScanner();
+          return;
+        }
+      }
+
+      setAlunos((prev) =>
+        prev.map((aluno) =>
+          String(aluno.id) === String(alunoEncontrado.id)
+            ? {
+              ...aluno,
+              presencas: [...(aluno.presencas || []), {
+                data: novaPresenca.data,
+                hora: novaPresenca.hora,
+              }],
+            }
+            : aluno
+        )
+      );
+
+      setPresencas((prev) => [...prev, novaPresenca]);
+
+      alert("Presenca registrada para " + alunoEncontrado.nome);
+      liberarScanner();
+    };
+
+    scanner
+      .start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        processarQrCode,
+        () => {}
+      )
+      .catch((error) => {
+        console.error("Erro ao iniciar camera do scanner.", error);
+        alert("Nao foi possivel abrir a camera. Permita o acesso a camera e tente novamente.");
+      });
 
     return () => {
-      scanner.clear().catch(() => { });
+      scannerAtivo = false;
+      scanner
+        .stop()
+        .catch(() => {})
+        .finally(() => {
+          scanner.clear();
+          document.getElementById("reader")?.replaceChildren();
+        });
     };
-  }, [tela]);
+  }, [tela, alunos, presencas, diretorOnlineLogado]);
 
-  //useEffect(() => {
-  // const relogio = setInterval(() => {
-  //   setHoraAtual(new Date().toLocaleTimeString());
-  // }, 1000);
+  useEffect(() => {
+    const relogio = setInterval(() => {
+      setHoraAtual(new Date().toLocaleTimeString());
+    }, 1000);
 
-  // return () => clearInterval(relogio);
-  // }, []);
+    return () => clearInterval(relogio);
+  }, []);
+
+  useEffect(() => {
+    const telasComDadosOnline = [
+      "dashboard",
+      "lista",
+      "pagamentos",
+      "historico",
+      "portalAluno",
+      "portalProfessor",
+    ];
+
+    if (!usuarioOnlineLogado || !telasComDadosOnline.includes(tela)) {
+      return;
+    }
+
+    let componenteAtivo = true;
+
+    async function sincronizarPainel() {
+      try {
+        if (!componenteAtivo) return;
+        await carregarDadosOnlineNoEstado();
+      } catch (error) {
+        console.error("Erro ao sincronizar painel online.", error);
+        if (componenteAtivo) {
+          setErroArmazenamento(
+            `Não foi possível carregar os dados online: ${error.message || "erro desconhecido"}`
+          );
+        }
+      }
+    }
+
+    sincronizarPainel();
+    const intervalo = setInterval(sincronizarPainel, 15000);
+
+    return () => {
+      componenteAtivo = false;
+      clearInterval(intervalo);
+    };
+  }, [tela, usuarioOnlineLogado]);
+
+  useEffect(() => {
+    if (!usuarioOnlineLogado || !supabase) return;
+
+    const canal = supabase
+      .channel("alunos-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "alunos" },
+        () => {
+          carregarDadosOnlineNoEstado().catch((error) => {
+            console.error("Erro ao recarregar alunos apos evento realtime.", error);
+          });
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "presencas" },
+        () => {
+          carregarDadosOnlineNoEstado().catch((error) => {
+            console.error("Erro ao recarregar presencas apos evento realtime.", error);
+          });
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "pagamentos" },
+        () => {
+          carregarDadosOnlineNoEstado().catch((error) => {
+            console.error("Erro ao recarregar pagamentos apos evento realtime.", error);
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(canal);
+    };
+  }, [usuarioOnlineLogado]);
 
   function limparFormulario() {
     setNome("");
+    setDataInicio("");
+    setUsuarioAluno("");
+    setSenhaAluno("");
     setTelefone("");
     setFaixa("");
     setResponsavel("");
@@ -279,21 +957,117 @@ function App() {
     setSaude("");
     setMedicamentos("");
     setObservacoes("");
+    setObservacaoFinanceira("");
     setFoto("");
     setAlunoEditando(null);
     setMensalidade("");
+    setVencimento("");
+    setNovaSenha("");
+    setConfirmarSenha("");
   }
 
-  function salvarAluno() {
+  function removerAlunoDosCachesLocais(alunoRemovido) {
+    if (!alunoRemovido) return;
+
+    const idRemovido = String(alunoRemovido.id || "");
+    const nomeRemovido = normalizarTextoChave(alunoRemovido.nome);
+
+    CHAVES_ALUNOS_LOCAIS.forEach((chave) => {
+      const dados = localStorage.getItem(chave);
+      if (!dados) return;
+
+      try {
+        const lista = JSON.parse(dados);
+        if (!Array.isArray(lista)) return;
+
+        const filtrada = lista.filter((aluno) => {
+          const mesmoId = idRemovido && String(aluno?.id || "") === idRemovido;
+          const mesmoNome =
+            nomeRemovido && normalizarTextoChave(aluno?.nome) === nomeRemovido;
+
+          return !mesmoId && !mesmoNome;
+        });
+
+        salvarDados(chave, filtrada);
+      } catch (error) {
+        console.warn(`Nao foi possivel limpar o cache de ${chave}.`, error);
+      }
+    });
+
+    CHAVES_USUARIOS_LOCAIS.forEach((chave) => {
+      const dados = localStorage.getItem(chave);
+      if (!dados) return;
+
+      try {
+        const lista = JSON.parse(dados);
+        if (!Array.isArray(lista)) return;
+
+        const filtrada = lista.filter((usuario) => {
+          const mesmoAluno = idRemovido && String(usuario?.alunoId || "") === idRemovido;
+          const mesmoNome =
+            nomeRemovido && normalizarTextoChave(usuario?.nome) === nomeRemovido;
+
+          return !mesmoAluno && !mesmoNome;
+        });
+
+        salvarDados(chave, filtrada);
+      } catch (error) {
+        console.warn(`Nao foi possivel limpar o cache de ${chave}.`, error);
+      }
+    });
+  }
+
+  function voltarResumoPortalAluno() {
+    setMostrarPix(false);
+    setMostrarCarteirinhaAluno(false);
+    setMostrarHistoricoAluno(false);
+    setMostrarDadosPortalAluno(false);
+    setModoEditarPerfil(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function salvarAluno() {
+    if (salvandoAluno) return;
+
     if (nome.trim() === "") {
       alert("Digite o nome do aluno.");
       return;
     }
 
+    if (supabaseConfigurado && !diretorOnlineLogado) {
+      alert("Entre com o e-mail do diretor cadastrado no Supabase antes de cadastrar ou alterar alunos.");
+      return;
+    }
+
+    const usuarioInformado = usuarioAluno.trim();
+    const senhaInformada = senhaAluno.trim();
+    const usuarioAtualDoAluno = alunoEditando
+      ? usuarios.find((usuario) => usuario.alunoId === alunoEditando.id)
+      : null;
+    const usuarioNormalizado =
+      usuarioInformado || usuarioAtualDoAluno?.usuario || criarUsuarioAluno(nome, usuarios);
+    const senhaNormalizada =
+      senhaInformada || (!alunoEditando || !usuarioAtualDoAluno ? "1234" : "");
+
+    if (
+      usuarioNormalizado !== "" &&
+      usuarios.some(
+        (usuario) =>
+          usuario.usuario.toLowerCase() === usuarioNormalizado.toLowerCase() &&
+          usuario.alunoId !== alunoEditando?.id
+      )
+    ) {
+      alert("Este usuário já existe. Escolha outro usuário para o aluno.");
+      return;
+    }
+
+    setSalvandoAluno(true);
+
     if (alunoEditando) {
+      let alunoAtualizado = null;
       const alunosAtualizados = alunos.map((aluno) => {
         if (aluno.id === alunoEditando.id) {
-          return {
+          alunoAtualizado = {
             ...aluno,
             nome,
             telefone,
@@ -310,27 +1084,104 @@ function App() {
             foto,
             mensalidade: Number(mensalidade),
             vencimento: Number(vencimento),
+            academiaId: aluno.academiaId || usuarioLogado?.academiaId || "",
           };
+
+          return alunoAtualizado;
         }
 
         return aluno;
       });
 
-      setAlunos(alunosAtualizados);
+      if (diretorOnlineLogado && alunoAtualizado) {
+        try {
+          const alunoOnline = await salvarAlunoOnline(alunoAtualizado);
+          alunoAtualizado = normalizarAluno(alunoOnline);
+          setAlunos(
+            alunosAtualizados.map((aluno) =>
+              aluno.id === alunoEditando.id ? alunoAtualizado : aluno
+            )
+          );
+        } catch (error) {
+          console.error("Erro ao atualizar aluno online.", error);
+          alert(`Nao foi possivel atualizar o aluno no banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
+          setSalvandoAluno(false);
+          return;
+        }
+      } else {
+        setAlunos(alunosAtualizados);
+      }
+
+      const alunoIdParaAcesso = alunoAtualizado?.id || alunoEditando.id;
+
+      setUsuarios((usuariosAtuais) => {
+        if (usuarioAtualDoAluno) {
+          return usuariosAtuais.map((usuario) => {
+            if (usuario.alunoId === alunoEditando.id) {
+              return {
+                ...usuario,
+                usuario: usuarioNormalizado,
+                senha: senhaNormalizada || usuario.senha,
+                nome,
+                alunoId: alunoIdParaAcesso,
+                academiaId: usuario.academiaId || usuarioLogado?.academiaId || alunoAtualizado?.academiaId || "",
+              };
+            }
+
+            return usuario;
+          });
+        }
+
+        return [
+          ...usuariosAtuais,
+          {
+            id: Date.now(),
+            usuario: usuarioNormalizado,
+            senha: senhaNormalizada,
+            cargo: "aluno",
+            nome,
+            alunoId: alunoIdParaAcesso,
+            academiaId: usuarioLogado?.academiaId || alunoAtualizado?.academiaId || "",
+          },
+        ];
+      });
+
+      if (diretorOnlineLogado) {
+        try {
+          if (!idAlunoOnlineValido(alunoIdParaAcesso)) {
+            throw new Error("Aluno ainda nao possui ID online valido.");
+          }
+
+          await salvarUsuarioSistemaOnline(
+            criarAcessoAluno({
+              id: usuarioAtualDoAluno?.id || Date.now(),
+              usuario: usuarioNormalizado,
+              senha: senhaNormalizada || usuarioAtualDoAluno?.senha || "1234",
+              nome,
+              alunoId: alunoIdParaAcesso,
+              academiaId: usuarioLogado?.academiaId || alunoAtualizado?.academiaId || "",
+            })
+          );
+      } catch (error) {
+        console.error("Erro ao salvar usuário do aluno online.", error);
+        alert(`Aluno atualizado, mas o acesso online não foi salvo.\n\nErro: ${error.message || "erro desconhecido"}`);
+      }
+      }
 
       setAlunoEditando(null);
 
       limparFormulario();
 
-      alert("Aluno atualizado com sucesso ✏️🔥");
+      alert("Aluno atualizado com sucesso ✅");
 
       setTela("lista");
 
+      setSalvandoAluno(false);
       return;
     }
 
     const novoAluno = {
-      id: Date.now(),
+      id: criarIdAluno(),
 
       nome,
       peso,
@@ -338,8 +1189,8 @@ function App() {
       faixa,
       dataInicio,
 
-      usuario: usuarioAluno,
-      senha: senhaAluno,
+      usuario: usuarioNormalizado,
+      senha: senhaNormalizada,
 
       telefone,
       responsavel,
@@ -362,60 +1213,109 @@ function App() {
       statusPagamento: "Pendente",
       ultimoPagamento: "",
       historicoPagamentos: [],
+      academiaId: usuarioLogado?.academiaId || "",
     };
-    setAlunos([...alunos, novoAluno]);
-    setUsuarios([
-      ...usuarios,
-      {
-        id: Date.now(),
-        usuario: usuarioAluno,
-        senha: senhaAluno,
-        cargo: "aluno",
-        nome: nome,
-        alunoId: novoAluno.id,
-      },
-    ]);
+    let alunoParaSalvar = novoAluno;
+
+    if (diretorOnlineLogado) {
+      try {
+        alunoParaSalvar = normalizarAluno(await salvarAlunoOnline(novoAluno));
+      } catch (error) {
+        console.error("Erro ao salvar aluno online.", error);
+        alert(`Nao foi possivel cadastrar o aluno no banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
+        setSalvandoAluno(false);
+        return;
+      }
+    }
+
+    const acessoAluno = criarAcessoAluno({
+      usuario: usuarioNormalizado,
+      senha: senhaNormalizada,
+      nome,
+      alunoId: alunoParaSalvar.id,
+      academiaId: usuarioLogado?.academiaId || alunoParaSalvar.academiaId || "",
+    });
+
+    setAlunos((alunosAtuais) =>
+      mesclarAlunosPreservandoLocais(alunosAtuais, [alunoParaSalvar])
+    );
+    setUsuarios((usuariosAtuais) => [...usuariosAtuais, acessoAluno]);
+
+    if (diretorOnlineLogado && idAlunoOnlineValido(alunoParaSalvar.id)) {
+      try {
+        await salvarUsuarioSistemaOnline(acessoAluno);
+      } catch (error) {
+        console.error("Erro ao salvar usuário do aluno online.", error);
+        alert(`Aluno cadastrado, mas o acesso online não foi salvo.\n\nErro: ${error.message || "erro desconhecido"}`);
+      }
+    } else if (diretorOnlineLogado) {
+      console.warn("Acesso online nao foi salvo porque o aluno nao possui ID online valido.");
+    }
 
     adicionarAviso(`Novo aluno cadastrado: ${nome}`);
 
-    alert(`Aluno ${nome} cadastrado com sucesso!`);
+    alert(`Aluno ${nome} cadastrado com sucesso!\n\nAcesso do portal:\nUsuario: ${usuarioNormalizado}\nSenha: ${senhaNormalizada}`);
 
     limparFormulario();
+    setSalvandoAluno(false);
     setTela("dashboard");
   }
 
-  function marcarComoPago(idAluno) {
+  async function marcarComoPago(idAluno) {
+    const dataPagamento = new Date().toLocaleDateString();
     const novosAlunos = alunos.map((aluno) => {
       if (aluno.id === idAluno) {
         return {
           ...aluno,
           statusPagamento: "Pago",
-          ultimoPagamento: new Date().toLocaleDateString(),
+          ultimoPagamento: dataPagamento,
           historicoPagamentos: [
             ...aluno.historicoPagamentos,
             {
-              data: new Date().toLocaleDateString(),
+              data: dataPagamento,
               valor: calcularValorComJuros(aluno),
             },
           ],
+          comprovantePagamento: null,
+          dataEnvioComprovante: "",
         };
       }
 
       return aluno;
     });
 
-    setAlunos(novosAlunos);
-
     const alunoPago = alunos.find((aluno) => aluno.id === idAluno);
+    const alunoAtualizado = novosAlunos.find((aluno) => aluno.id === idAluno);
 
-    if (alunoPago) {
-      adicionarAviso(`Pagamento confirmado: ${alunoPago.nome}`);
+    if (!alunoPago || !alunoAtualizado) return;
+
+    if (diretorOnlineLogado) {
+      try {
+        await Promise.all([
+          salvarAlunoOnline(alunoAtualizado),
+          confirmarPagamentoOnline({
+            aluno_id: idAluno,
+            valor: calcularValorComJuros(alunoPago),
+            status: "Pago",
+            data_pagamento: new Date().toISOString().slice(0, 10),
+            comprovante_url: alunoPago.comprovantePagamento || null,
+          }),
+        ]);
+        await carregarDadosOnlineNoEstado();
+      } catch (error) {
+        console.error("Erro ao salvar pagamento online.", error);
+        alert(`Nao foi possivel confirmar o pagamento no banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
+        return;
+      }
+    } else {
+      setAlunos(novosAlunos);
     }
 
-    alert("Pagamento marcado como Pago ✅");
+    adicionarAviso(`Pagamento confirmado: ${alunoPago.nome}`);
+    alert("Pagamento marcado como Pago.");
   }
 
-  function marcarComoPendente(idAluno) {
+  async function marcarComoPendente(idAluno) {
     const novosAlunos = alunos.map((aluno) => {
       if (aluno.id === idAluno) {
         return {
@@ -427,13 +1327,38 @@ function App() {
       return aluno;
     });
 
-    setAlunos(novosAlunos);
+    const alunoAtualizado = novosAlunos.find((aluno) => aluno.id === idAluno);
 
-    alert("Pagamento marcado como Pendente ❌");
+    if (!alunoAtualizado) return;
+
+    if (diretorOnlineLogado) {
+      try {
+        await Promise.all([
+          salvarAlunoOnline(alunoAtualizado),
+          salvarPagamentoOnline({
+            aluno_id: idAluno,
+            valor: Number(alunoAtualizado.mensalidade || 0),
+            status: "Pendente",
+            data_pagamento: null,
+          }),
+        ]);
+        await carregarDadosOnlineNoEstado();
+      } catch (error) {
+        console.error("Erro ao salvar pendencia online.", error);
+        alert(`Nao foi possivel marcar o pagamento como pendente no banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
+        return;
+      }
+    } else {
+      setAlunos(novosAlunos);
+    }
+
+    alert("Pagamento marcado como Pendente.");
   }
 
-  function atualizarPerfilAluno() {
-    if (!alunoDoPortal) {
+  async function atualizarPerfilAluno() {
+    const alunoPerfil = alunoDoPortal;
+
+    if (!alunoPerfil) {
       alert("Aluno não encontrado.");
       return;
     }
@@ -444,7 +1369,7 @@ function App() {
     }
 
     const alunosAtualizados = alunos.map((aluno) => {
-      if (aluno.id === alunoDoPortal.id) {
+      if (String(aluno.id) === String(alunoPerfil.id)) {
         return {
           ...aluno,
           telefone,
@@ -460,15 +1385,44 @@ function App() {
       return aluno;
     });
 
-    setAlunos(alunosAtualizados);
+    const alunoAtualizado = alunosAtualizados.find(
+      (aluno) => String(aluno.id) === String(alunoPerfil.id)
+    );
+
+    if (supabaseConfigurado) {
+      if (!idAlunoOnlineValido(alunoPerfil.id)) {
+        alert("Este aluno ainda nao possui um ID online valido. Peça ao mestre para recarregar o aluno pelo Supabase.");
+        return;
+      }
+
+      try {
+        const alunoOnline = normalizarAluno(await salvarAlunoOnline(alunoAtualizado));
+        setAlunos((alunosAtuais) =>
+          alunosAtuais.map((aluno) =>
+            String(aluno.id) === String(alunoOnline.id) ? alunoOnline : aluno
+          )
+        );
+      } catch (error) {
+        console.error("Erro ao atualizar cadastro do aluno online.", error);
+        alert(`Nao foi possivel salvar seu cadastro no banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
+        return;
+      }
+    } else {
+      setAlunos(alunosAtualizados);
+    }
 
     const usuariosAtualizados = usuarios.map((usuario) => {
 
-      if (usuario.alunoId === alunoDoPortal.id) {
+      if (
+        String(usuario.alunoId) === String(alunoPerfil.id) ||
+        String(usuario.id) === String(usuarioLogado?.id) ||
+        usuario.usuario?.trim().toLowerCase() === usuarioLogado?.usuario?.trim().toLowerCase()
+      ) {
 
         return {
           ...usuario,
           senha: novaSenha || usuario.senha,
+          alunoId: alunoPerfil.id,
         };
 
       }
@@ -478,6 +1432,33 @@ function App() {
     });
 
     setUsuarios(usuariosAtualizados);
+
+    const usuarioLogadoAtualizado = usuariosAtualizados.find(
+      (usuario) =>
+        String(usuario.id) === String(usuarioLogado?.id) ||
+        usuario.usuario?.trim().toLowerCase() === usuarioLogado?.usuario?.trim().toLowerCase()
+    );
+
+    if (usuarioLogadoAtualizado) {
+      setUsuarioLogado(usuarioLogadoAtualizado);
+    }
+
+    if (usuarioOnlineLogado) {
+      const usuarioAtualizado = usuariosAtualizados.find(
+        (usuario) =>
+          String(usuario.alunoId) === String(alunoPerfil.id) ||
+          usuario.usuario?.trim().toLowerCase() === usuarioLogado?.usuario?.trim().toLowerCase()
+      );
+
+      try {
+        if (usuarioAtualizado && usuarioLogado?.origem === "usuarios_sistema") {
+          await salvarUsuarioSistemaOnline(usuarioAtualizado);
+        }
+      } catch (error) {
+        console.error("Erro ao atualizar acesso do aluno online.", error);
+        alert(`Cadastro salvo, mas nao foi possivel atualizar o acesso online.\n\nErro: ${error.message || "erro desconhecido"}`);
+      }
+    }
 
     setModoEditarPerfil(false);
 
@@ -515,53 +1496,96 @@ function App() {
 
     setModoEditarPerfil(false);
 
-    alert("Cadastro do professor atualizado 😎🔥");
+    alert("Cadastro do professor atualizado 😎🥋");
   }
 
-  function informarPagamento(idAluno, comprovante = null) {
-
+  async function informarPagamento(idAluno, comprovante = null) {
     const novosAlunos = alunos.map((aluno) => {
-
       if (aluno.id === idAluno) {
-
         return {
           ...aluno,
           statusPagamento: "Aguardando",
           comprovantePagamento: comprovante,
           dataEnvioComprovante: new Date().toLocaleDateString(),
         };
-
       }
 
       return aluno;
     });
 
-    setAlunos(novosAlunos);
+    const alunoAtualizado = novosAlunos.find((aluno) => aluno.id === idAluno);
 
-    alert("Pagamento enviado para análise ⏳");
+    if (!alunoAtualizado) return;
+
+    if (idAlunoOnlineValido(idAluno)) {
+      try {
+        await Promise.all([
+          salvarAlunoOnline(alunoAtualizado),
+          salvarPagamentoOnline({
+            aluno_id: idAluno,
+            valor: Number(alunoAtualizado.mensalidade || 0),
+            status: "Aguardando",
+            data_pagamento: new Date().toISOString().slice(0, 10),
+            comprovante_url: comprovante,
+          }),
+        ]);
+        setAlunos(novosAlunos);
+        await carregarDadosOnlineNoEstado();
+      } catch (error) {
+        console.error("Erro ao enviar pagamento online.", error);
+        alert(`Nao foi possivel enviar o pagamento ao banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
+        return;
+      }
+    } else if (supabaseConfigurado) {
+      alert("Este aluno ainda nao possui ID online valido. Recarregue os dados do Supabase antes de enviar pagamento.");
+      return;
+    } else {
+      setAlunos(novosAlunos);
+    }
+
+    alert("Pagamento enviado para analise.");
   }
 
-  function rejeitarPagamento(idAluno) {
-
+  async function rejeitarPagamento(idAluno) {
     const novosAlunos = alunos.map((aluno) => {
-
       if (aluno.id === idAluno) {
-
         return {
           ...aluno,
           statusPagamento: "Pendente",
           comprovantePagamento: null,
           dataEnvioComprovante: "",
         };
-
       }
 
       return aluno;
     });
 
-    setAlunos(novosAlunos);
+    const alunoAtualizado = novosAlunos.find((aluno) => aluno.id === idAluno);
 
-    alert("Comprovante rejeitado ❌");
+    if (!alunoAtualizado) return;
+
+    if (diretorOnlineLogado) {
+      try {
+        await Promise.all([
+          salvarAlunoOnline(alunoAtualizado),
+          salvarPagamentoOnline({
+            aluno_id: idAluno,
+            valor: Number(alunoAtualizado.mensalidade || 0),
+            status: "Rejeitado",
+            data_pagamento: new Date().toISOString().slice(0, 10),
+          }),
+        ]);
+        await carregarDadosOnlineNoEstado();
+      } catch (error) {
+        console.error("Erro ao rejeitar pagamento online.", error);
+        alert(`Nao foi possivel rejeitar o pagamento no banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
+        return;
+      }
+    } else {
+      setAlunos(novosAlunos);
+    }
+
+    alert("Comprovante rejeitado.");
   }
 
   function gerarReciboPDF(aluno) {
@@ -646,79 +1670,656 @@ function App() {
       y += 10;
     });
 
-    doc.save("relatorio-financeiro-ariramba.pdf");
+    doc.save("relatorio-financeiro-simao-team.pdf");
   }
 
-  function registrarPresenca(idAluno) {
-    const novosAlunos = alunos.map((aluno) => {
-      if (aluno.id === idAluno) {
-        const hoje = new Date().toLocaleDateString();
+  async function baixarCarteirinhaPDF(aluno) {
+    if (!aluno) {
+      alert("Aluno nao encontrado.");
+      return;
+    }
 
-        const jaRegistrou = aluno.presencas.some(
-          (presenca) => presenca.data === hoje
-        );
+    let alunoParaPDF = aluno;
 
-        if (jaRegistrou) {
-          alert("Aluno já registrou presença hoje ⚠️");
-          return aluno;
-        }
-        return {
-          ...aluno,
-          presencas: [
-            ...aluno.presencas,
-            {
-              data: new Date().toLocaleDateString(),
-              hora: new Date().toLocaleTimeString(),
-            },
-          ],
+    if (!alunoParaPDF.foto && supabaseConfigurado && idAlunoOnlineValido(alunoParaPDF.id)) {
+      try {
+        const fotoOnline = await obterFotoAlunoOnline(alunoParaPDF.id);
+        alunoParaPDF = {
+          ...alunoParaPDF,
+          foto: fotoOnline,
+          fotoUrl: fotoOnline,
         };
+      } catch (error) {
+        console.error("Erro ao carregar foto do aluno para PDF.", error);
       }
+    }
 
-      return aluno;
+    const qrCanvas = document.querySelector("#qrCarteirinhaAluno canvas");
+    const qrImagem = qrCanvas?.toDataURL("image/png");
+    const status = verificarVencimento(alunoParaPDF) === "Pago"
+      ? "Ativo"
+      : verificarVencimento(alunoParaPDF) === "Vencido"
+        ? "Vencido"
+        : "Pendente";
+
+    const doc = new jsPDF({
+      orientation: "landscape",
+      unit: "mm",
+      format: [86, 54],
     });
 
-    setAlunos(novosAlunos);
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 86, 54, "F");
+    doc.setDrawColor(245, 158, 11);
+    doc.setLineWidth(0.8);
+    doc.roundedRect(3, 3, 80, 48, 3, 3, "S");
 
+    doc.setTextColor(245, 158, 11);
+    doc.setFontSize(9);
+    doc.text("SIMAO TAVARES TOP TEAM", 43, 8.5, { align: "center" });
+
+    if (alunoParaPDF.foto) {
+      try {
+        const fotoCarteirinha = await prepararFotoCarteirinha(alunoParaPDF.foto);
+        doc.addImage(fotoCarteirinha, "JPEG", 7, 16, 21, 21);
+      } catch (error) {
+        console.error("Erro ao adicionar foto na carteirinha.", error);
+        doc.setDrawColor(148, 163, 184);
+        doc.roundedRect(7, 16, 21, 21, 2, 2, "S");
+        doc.setTextColor(148, 163, 184);
+        doc.setFontSize(5);
+        doc.text("Foto", 17.5, 27, { align: "center" });
+      }
+    } else {
+      doc.setDrawColor(148, 163, 184);
+      doc.roundedRect(7, 16, 21, 21, 2, 2, "S");
+      doc.setTextColor(148, 163, 184);
+      doc.setFontSize(5);
+      doc.text("Sem foto", 17.5, 27, { align: "center" });
+    }
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(6.6);
+    doc.text(`Aluno: ${alunoParaPDF.nome || usuarioLogado?.nome || ""}`, 31, 17);
+    doc.text(`Faixa: ${alunoParaPDF.faixa || "Nao informado"}`, 31, 23.5);
+    doc.text(`Grau: ${alunoParaPDF.grau || "Nao informado"}`, 31, 30);
+    doc.text(`Status: ${status}`, 31, 36.5);
+    doc.text(`Vencimento: dia ${alunoParaPDF.vencimento || "--"}`, 31, 43);
+
+    if (qrImagem) {
+      doc.addImage(qrImagem, "PNG", 64, 18, 16, 16);
+      doc.setFontSize(6);
+      doc.text("QR de presenca", 72, 38, { align: "center" });
+    }
+
+    const nomeArquivo = String(alunoParaPDF.nome || "aluno")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/gi, "-")
+      .replace(/^-+|-+$/g, "")
+      .toLowerCase();
+
+    doc.save(`carteirinha-${nomeArquivo || "aluno"}.pdf`);
+  }
+
+  async function abrirCarteirinha(aluno) {
+    if (!aluno) return;
+
+    setAlunoCarteirinha(aluno);
+
+    if (!supabaseConfigurado || aluno.foto || !idAlunoOnlineValido(aluno.id)) {
+      return;
+    }
+
+    try {
+      const fotoOnline = await obterFotoAlunoOnline(aluno.id);
+
+      if (!fotoOnline) return;
+
+      const alunoComFoto = {
+        ...aluno,
+        foto: fotoOnline,
+        fotoUrl: fotoOnline,
+      };
+
+      setAlunoCarteirinha(alunoComFoto);
+      setAlunos((alunosAtuais) =>
+        alunosAtuais.map((alunoAtual) =>
+          String(alunoAtual.id) === String(aluno.id)
+            ? { ...alunoAtual, foto: fotoOnline, fotoUrl: fotoOnline }
+            : alunoAtual
+        )
+      );
+    } catch (error) {
+      console.error("Erro ao carregar foto do aluno para a carteirinha.", error);
+    }
+  }
+
+  async function registrarPresenca(idAluno) {
     const alunoEncontrado = alunos.find(
       (aluno) => aluno.id === idAluno
     );
 
     if (alunoEncontrado) {
+      if (bloquearPresencaSeMensalidadeVencida(alunoEncontrado)) {
+        return;
+      }
+
+      const hoje = new Date().toLocaleDateString();
+      const jaRegistrou = (alunoEncontrado.presencas || []).some(
+        (presenca) => presenca.data === hoje
+      );
+
+      if (jaRegistrou) {
+        alert("Aluno já registrou presença hoje ⚠️");
+        return;
+      }
+
       const novaPresenca = {
+        alunoId: alunoEncontrado.id,
         nome: alunoEncontrado.nome,
         foto: alunoEncontrado.foto,
         data: new Date().toLocaleDateString(),
         hora: new Date().toLocaleTimeString(),
       };
 
+      const novosAlunos = alunos.map((aluno) => {
+        if (aluno.id === idAluno) {
+          return {
+            ...aluno,
+            presencas: [
+              ...(aluno.presencas || []),
+              {
+                data: novaPresenca.data,
+                hora: novaPresenca.hora,
+              },
+            ],
+          };
+        }
+
+        return aluno;
+      });
+
+      if (diretorOnlineLogado) {
+        try {
+          await registrarPresencaOnline(novaPresenca);
+        } catch (error) {
+          console.error("Erro ao registrar presença online.", error);
+          alert(`Não foi possível enviar a presença ao banco online.\n\nErro: ${error.message}`);
+          return;
+        }
+      }
+
+      setAlunos(novosAlunos);
       setPresencas((prev) => [...prev, novaPresenca]);
 
       adicionarAviso(`${alunoEncontrado.nome} registrou presença`);
-
+      alert("Presença registrada 😎🥋");
     }
-
-    alert("Presença registrada 😎🔥");
 
   }
 
-  function removerAluno(idAluno) {
+  async function removerAluno(idAluno) {
     const confirmar = confirm("Deseja remover este aluno?");
 
     if (!confirmar) return;
 
-    const novosAlunos = alunos.filter(
-      (aluno) => aluno.id !== idAluno
+    const alunoRemovido = alunos.find((aluno) => aluno.id === idAluno);
+
+    if (diretorOnlineLogado) {
+      if (!idAlunoOnlineValido(idAluno)) {
+        alert("Este aluno nao possui ID online valido para exclusao no banco.");
+        return;
+      }
+
+      try {
+        await removerUsuarioSistemaOnlinePorAluno(idAluno);
+        await removerAlunoOnline(idAluno);
+      } catch (error) {
+        console.error("Erro ao remover aluno online.", error);
+        alert(`Nao foi possivel remover o aluno do banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
+        return;
+      }
+
+      try {
+        removerAlunoDosCachesLocais(alunoRemovido);
+        await carregarDadosOnlineNoEstado();
+      } catch (error) {
+        console.error("Erro ao recarregar dados apos exclusao online.", error);
+      }
+
+      setUsuarios((prev) => prev.filter((usuario) => usuario.alunoId !== idAluno));
+      alert("Aluno removido com sucesso.");
+      return;
+    }
+
+    const novosAlunos = alunos.filter((aluno) => aluno.id !== idAluno);
+    removerAlunoDosCachesLocais(alunoRemovido);
+    setAlunos(novosAlunos);
+    setUsuarios((prev) => prev.filter((usuario) => usuario.alunoId !== idAluno));
+    setPresencas((prev) =>
+      prev.filter(
+        (presenca) =>
+          presenca.alunoId !== idAluno &&
+          (!alunoRemovido || presenca.nome !== alunoRemovido.nome)
+      )
     );
 
-    setAlunos(novosAlunos);
+    alert("Aluno removido com sucesso.");
+  }
 
-    alert("Aluno removido com sucesso 🗑️");
+  function exportarBackup() {
+    const backup = {
+      app: APP_NAME,
+      versao: 1,
+      geradoEm: new Date().toISOString(),
+      alunos,
+      presencas,
+      avisos,
+      usuarios,
+    };
+
+    const arquivo = new Blob([JSON.stringify(backup, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(arquivo);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `backup-simao-team-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+
+    URL.revokeObjectURL(url);
+  }
+
+  function importarBackup(evento) {
+    const arquivo = evento.target.files?.[0];
+
+    if (!arquivo) return;
+
+    const confirmar = confirm(
+      "Restaurar este backup vai substituir os dados atuais deste navegador. Deseja continuar?"
+    );
+
+    if (!confirmar) {
+      evento.target.value = "";
+      return;
+    }
+
+    const leitor = new FileReader();
+
+    leitor.onload = () => {
+      try {
+        const backup = JSON.parse(leitor.result);
+
+        if (!Array.isArray(backup.alunos) || !Array.isArray(backup.usuarios)) {
+          alert("Arquivo de backup inválido.");
+          return;
+        }
+
+        setAlunos(backup.alunos.map(normalizarAluno));
+        setPresencas(Array.isArray(backup.presencas) ? backup.presencas : []);
+        setAvisos(Array.isArray(backup.avisos) ? backup.avisos : []);
+        setUsuarios(backup.usuarios);
+        setErroArmazenamento("");
+
+        alert("Backup restaurado com sucesso ✅");
+      } catch (error) {
+        console.error("Erro ao importar backup.", error);
+        alert("Não foi possível ler este arquivo de backup.");
+      } finally {
+        evento.target.value = "";
+      }
+    };
+
+    leitor.readAsText(arquivo);
+  }
+
+  function entrarUsuarioLocal(usuarioEncontrado) {
+    setUsuarioLogado(usuarioEncontrado);
+    setTipoUsuario(usuarioEncontrado.cargo);
+
+    if (usuarioEncontrado.cargo === "aluno") {
+      setTela("portalAluno");
+    } else if (usuarioEncontrado.cargo === "professor") {
+      setTela("portalProfessor");
+    } else {
+      setTela("dashboard");
+    }
+  }
+
+  function promoverSessaoOnlineSistema(usuarioDigitado, senhaDigitada) {
+    if (!supabaseConfigurado) return;
+
+    limitarTempo(
+      buscarUsuarioSistemaOnline(usuarioDigitado),
+      2500,
+      "Consulta online demorou demais."
+    )
+      .then((usuarioOnlineSistema) => {
+        if (usuarioOnlineSistema?.senha?.trim() !== senhaDigitada) return;
+
+        setUsuarios((usuariosAtuais) => {
+          const jaExiste = usuariosAtuais.some(
+            (usuarioAtual) =>
+              usuarioAtual.usuario.trim().toLowerCase() ===
+              usuarioOnlineSistema.usuario.trim().toLowerCase()
+          );
+
+          return jaExiste ? usuariosAtuais : [...usuariosAtuais, usuarioOnlineSistema];
+        });
+
+        setUsuarioLogado(usuarioOnlineSistema);
+        setTipoUsuario(usuarioOnlineSistema.cargo);
+        setErroArmazenamento("");
+      })
+      .catch((error) => {
+        console.error("Erro ao confirmar usuário online.", error);
+        setErroArmazenamento(
+          "Entrou rápido no modo local. A confirmação online ainda não respondeu; tente enviar ao banco novamente em alguns segundos."
+        );
+      });
+  }
+
+  async function fazerLogin() {
+    if (loginEmAndamento) return;
+
+    const usuarioDigitado = usuario.trim();
+    const senhaDigitada = senha.trim();
+
+    if (!usuarioDigitado || !senhaDigitada) {
+      alert("Digite usuário e senha.");
+      return;
+    }
+
+    setLoginEmAndamento(true);
+
+    const usuarioLocal = usuarios.find(
+      (u) =>
+        u.usuario.trim().toLowerCase() === usuarioDigitado.toLowerCase() &&
+        u.senha.trim() === senhaDigitada
+    );
+
+    if (usuarioLocal) {
+      entrarUsuarioLocal(usuarioLocal);
+      promoverSessaoOnlineSistema(usuarioDigitado, senhaDigitada);
+      setLoginEmAndamento(false);
+      return;
+    }
+
+    if (supabaseConfigurado && !usuarioDigitado.includes("@")) {
+      try {
+        const usuarioOnlineSistema = await limitarTempo(
+          buscarUsuarioSistemaOnline(usuarioDigitado),
+          1500,
+          "Consulta online demorou demais."
+        );
+
+        if (usuarioOnlineSistema?.senha?.trim() === senhaDigitada) {
+          setUsuarios((usuariosAtuais) => {
+            const jaExiste = usuariosAtuais.some(
+              (usuarioAtual) =>
+                usuarioAtual.usuario.trim().toLowerCase() ===
+                usuarioOnlineSistema.usuario.trim().toLowerCase()
+            );
+
+            return jaExiste ? usuariosAtuais : [...usuariosAtuais, usuarioOnlineSistema];
+          });
+
+          entrarUsuarioLocal(usuarioOnlineSistema);
+          setLoginEmAndamento(false);
+          return;
+        }
+      } catch (error) {
+        console.error("Erro ao consultar usuário online.", error);
+      }
+    }
+
+    if (supabaseConfigurado && usuarioDigitado.includes("@")) {
+      try {
+        const loginOnline = await limitarTempo(
+          entrarComEmailSenha(usuarioDigitado, senhaDigitada),
+          15000,
+          "Login online demorou demais."
+        );
+
+        const perfil = await limitarTempo(
+          obterPerfilSupabase(),
+          15000,
+          "Perfil online demorou demais."
+        );
+
+        if (!perfil?.cargo || !perfil?.academia_id) {
+          await sairDoSupabase().catch((error) => {
+            console.error("Erro ao encerrar sessao sem perfil online.", error);
+          });
+          alert("Login autenticado, mas este usuario ainda nao possui perfil autorizado no banco online.");
+          setLoginEmAndamento(false);
+          return;
+        }
+
+        const usuarioOnline = {
+          id: perfil.id || loginOnline?.user?.id || usuarioDigitado,
+          usuario: usuarioDigitado,
+          cargo: perfil.cargo,
+          nome: perfil.nome || usuarioDigitado,
+          alunoId: perfil.aluno_id,
+          academiaId: perfil.academia_id,
+          origem: "supabase",
+        };
+
+        setUsuarios((usuariosAtuais) => {
+          const jaExiste = usuariosAtuais.some(
+            (usuarioAtual) =>
+              usuarioAtual.usuario.trim().toLowerCase() === usuarioDigitado.toLowerCase()
+          );
+
+          return jaExiste ? usuariosAtuais : [...usuariosAtuais, usuarioOnline];
+        });
+        setUsuarioLogado(usuarioOnline);
+        setTipoUsuario(perfil.cargo);
+
+        if (perfil.cargo === "aluno") {
+          setTela("portalAluno");
+        } else if (perfil.cargo === "professor") {
+          setTela("portalProfessor");
+        } else {
+          setTela("dashboard");
+        }
+
+        setLoginEmAndamento(false);
+        return;
+      } catch (error) {
+        console.error("Erro no login online.", error);
+        await sairDoSupabase().catch(() => {});
+        alert(
+          `Não foi possível entrar pelo Supabase.\n\nDetalhe: ${
+            error.message || "erro desconhecido"
+          }`
+        );
+        setLoginEmAndamento(false);
+        return;
+      }
+    }
+
+    alert("Usuário ou senha inválidos!");
+    setLoginEmAndamento(false);
+  }
+
+  function sairDoSistema() {
+    setTela("inicio");
+    setUsuario("");
+    setSenha("");
+    setTipoUsuario("");
+    setUsuarioLogado(null);
+    setModoEditarPerfil(false);
+    setMostrarPix(false);
+    setMostrarCarteirinhaAluno(false);
+    setMostrarHistoricoAluno(false);
+    setMostrarDadosPortalAluno(false);
+    setMenuAberto(false);
+    localStorage.removeItem(STORAGE_KEYS.usuarioLogado);
+    localStorage.removeItem("usuario_logado_ariramba");
+  }
+
+  async function enviarAlunosParaBancoOnline() {
+    if (!supabaseConfigurado) {
+      setErroArmazenamento("Supabase ainda não está configurado.");
+      return;
+    }
+
+    if (!diretorOnlineLogado) {
+      setErroArmazenamento(
+        "Para enviar alunos ao Supabase, saia e entre com o e-mail do diretor cadastrado no Supabase. O login local admin/1234 salva apenas neste navegador."
+      );
+      return;
+    }
+
+    const alunosLocaisSalvos = recuperarListasSalvas(CHAVES_ALUNOS_LOCAIS)
+      .map(normalizarAluno);
+    const usuariosLocaisSalvos = recuperarListasSalvas(CHAVES_USUARIOS_LOCAIS);
+    const alunosParaEnviar = mesclarAlunosPreservandoLocais(alunos, alunosLocaisSalvos);
+
+    if (alunosParaEnviar.length === 0) {
+      setErroArmazenamento("Não há alunos locais para enviar.");
+      return;
+    }
+
+    try {
+      setSincronizacaoOnline("enviando");
+      setErroArmazenamento(
+        `Enviando ${alunosParaEnviar.length} aluno(s) encontrados neste aparelho para o banco online...`
+      );
+      const alunosOnline = await migrarAlunosOnline(alunosParaEnviar);
+      const alunosOnlineNormalizados = alunosOnline.map(normalizarAluno);
+      const alunoOnlinePorIdOriginal = new Map();
+      const alunoOnlinePorNome = new Map();
+      const acessosMigrados = [];
+      const falhasAcesso = [];
+
+      alunosParaEnviar.forEach((alunoOriginal, indice) => {
+        const alunoOnline = alunosOnlineNormalizados[indice];
+
+        if (alunoOriginal?.id && alunoOnline?.id) {
+          alunoOnlinePorIdOriginal.set(String(alunoOriginal.id), alunoOnline);
+        }
+
+        if (alunoOnline?.nome) {
+          alunoOnlinePorNome.set(normalizarTextoChave(alunoOnline.nome), alunoOnline);
+        }
+      });
+
+      for (const usuarioLocal of usuariosLocaisSalvos) {
+        if (usuarioLocal?.cargo !== "aluno" || !usuarioLocal.usuario) continue;
+
+        const alunoOnline =
+          alunoOnlinePorIdOriginal.get(String(usuarioLocal.alunoId || "")) ||
+          alunoOnlinePorNome.get(normalizarTextoChave(usuarioLocal.nome));
+
+        if (!alunoOnline?.id) {
+          falhasAcesso.push(usuarioLocal.usuario);
+          continue;
+        }
+
+        const acessoAluno = criarAcessoAluno({
+          id: usuarioLocal.id,
+          usuario: usuarioLocal.usuario,
+          senha: usuarioLocal.senha ?? "",
+          nome: usuarioLocal.nome || alunoOnline.nome,
+          alunoId: alunoOnline.id,
+          academiaId:
+            usuarioLocal.academiaId ||
+            alunoOnline.academiaId ||
+            usuarioLogado?.academiaId ||
+            "",
+        });
+
+        try {
+          await salvarUsuarioSistemaOnline(acessoAluno);
+          acessosMigrados.push(acessoAluno);
+        } catch (error) {
+          console.error("Erro ao migrar acesso do aluno para o Supabase.", {
+            usuario: usuarioLocal.usuario,
+            alunoId: alunoOnline.id,
+            error,
+          });
+          falhasAcesso.push(usuarioLocal.usuario);
+        }
+      }
+
+      setAlunos(alunosOnlineNormalizados);
+      setUsuarios((usuariosAtuais) => {
+        const usuariosPorLogin = new Map(
+          usuariosAtuais.map((usuarioAtual) => [
+            normalizarTextoChave(usuarioAtual.usuario),
+            usuarioAtual,
+          ])
+        );
+
+        acessosMigrados.forEach((acessoAluno) => {
+          usuariosPorLogin.set(normalizarTextoChave(acessoAluno.usuario), acessoAluno);
+        });
+
+        return Array.from(usuariosPorLogin.values());
+      });
+
+      if (falhasAcesso.length > 0) {
+        setErroArmazenamento(
+          `${falhasAcesso.length} acesso(s) de aluno não foram vinculados automaticamente. Confira os nomes/usuários: ${falhasAcesso.join(", ")}`
+        );
+      } else {
+        setErroArmazenamento("");
+      }
+      alert(
+        `${alunosOnline.length} aluno(s) enviados para o banco online.\n${acessosMigrados.length} acesso(s) do portal de aluno sincronizado(s).`
+      );
+    } catch (error) {
+      console.error("Erro ao enviar alunos para o Supabase.", error);
+      setErroArmazenamento(
+        `Não foi possível enviar os alunos para o banco online: ${error.message || "erro desconhecido"}`
+      );
+    } finally {
+      setSincronizacaoOnline("");
+    }
+  }
+
+  async function carregarAlunosDoBancoOnline() {
+    if (!supabaseConfigurado) {
+      setErroArmazenamento("Supabase ainda não está configurado.");
+      return;
+    }
+
+    if (!diretorOnlineLogado) {
+      setErroArmazenamento(
+        "Para carregar alunos do Supabase, saia e entre com o e-mail do diretor cadastrado no Supabase."
+      );
+      return;
+    }
+
+    try {
+      setSincronizacaoOnline("carregando");
+      setErroArmazenamento("Carregando alunos do banco online...");
+      const alunosOnlineComDados = await carregarDadosOnlineNoEstado();
+      setErroArmazenamento("");
+      alert(`${alunosOnlineComDados.length} aluno(s) carregados do banco online.`);
+    } catch (error) {
+      console.error("Erro ao carregar alunos do Supabase.", error);
+      setErroArmazenamento(
+        `Não foi possível carregar os alunos do banco online: ${error.message || "erro desconhecido"}`
+      );
+    } finally {
+      setSincronizacaoOnline("");
+    }
   }
 
   function editarAluno(aluno) {
     setAlunoEditando(aluno);
+    const usuarioDoAluno = usuarios.find((usuario) => usuario.alunoId === aluno.id);
 
     setNome(aluno.nome);
+    setDataInicio(aluno.dataInicio || "");
+    setUsuarioAluno(usuarioDoAluno?.usuario || aluno.usuario || "");
+    setSenhaAluno("");
     setTelefone(aluno.telefone);
     setFaixa(aluno.faixa);
     setResponsavel(aluno.responsavel);
@@ -741,9 +2342,30 @@ function App() {
     aluno.nome.toLowerCase().includes(busca.toLowerCase())
   );
 
-  const alunoDoPortal = alunos.find(
-    (aluno) => aluno.id === usuarioLogado?.alunoId
-  );
+  const alunoDoPortal = alunos.find((aluno) => {
+    if (!usuarioLogado) return false;
+
+    const mesmoId =
+      usuarioLogado.alunoId &&
+      String(aluno.id) === String(usuarioLogado.alunoId);
+    const mesmoAuthUser =
+      usuarioLogado.origem === "supabase" &&
+      usuarioLogado.id &&
+      aluno.authUserId &&
+      String(aluno.authUserId) === String(usuarioLogado.id);
+    const mesmoUsuario =
+      !usuarioOnlineLogado &&
+      aluno.usuario &&
+      usuarioLogado.usuario &&
+      aluno.usuario.trim().toLowerCase() === usuarioLogado.usuario.trim().toLowerCase();
+    const mesmoNome =
+      !usuarioOnlineLogado &&
+      aluno.nome &&
+      usuarioLogado.nome &&
+      aluno.nome.trim().toLowerCase() === usuarioLogado.nome.trim().toLowerCase();
+
+    return mesmoId || mesmoAuthUser || mesmoUsuario || mesmoNome;
+  });
 
   useEffect(() => {
     if (tela === "portalAluno" && alunoDoPortal) {
@@ -756,6 +2378,71 @@ function App() {
       setFoto(alunoDoPortal.foto || "");
     }
   }, [tela, alunoDoPortal]);
+
+  useEffect(() => {
+    if (tela !== "portalProfessor" || !usuarioLogado) return;
+
+    const professorAtual = usuarios.find(
+      (usuario) =>
+        String(usuario.id) === String(usuarioLogado.id) ||
+        usuario.usuario?.trim().toLowerCase() === usuarioLogado.usuario?.trim().toLowerCase()
+    );
+
+    setTelefone(professorAtual?.telefone || usuarioLogado.telefone || "");
+    setEspecialidadeProfessor(
+      professorAtual?.especialidadeProfessor || usuarioLogado.especialidadeProfessor || ""
+    );
+    setGraduacaoProfessor(
+      professorAtual?.graduacaoProfessor || usuarioLogado.graduacaoProfessor || ""
+    );
+    setObservacoes(professorAtual?.observacoes || usuarioLogado.observacoes || "");
+    setFoto(professorAtual?.foto || usuarioLogado.foto || "");
+  }, [tela, usuarioLogado, usuarios]);
+
+  useEffect(() => {
+    if (
+      tela !== "portalAluno" ||
+      alunoDoPortal ||
+      !supabaseConfigurado ||
+      (!usuarioLogado?.alunoId || !idAlunoOnlineValido(usuarioLogado.alunoId)) &&
+      usuarioLogado?.origem !== "supabase"
+    ) {
+      return;
+    }
+
+    let ativo = true;
+
+    const consultaAluno = usuarioLogado?.alunoId && idAlunoOnlineValido(usuarioLogado.alunoId)
+      ? obterAlunoOnline(usuarioLogado.alunoId)
+      : obterAlunoDoUsuarioOnline(usuarioLogado.id);
+
+    consultaAluno
+      .then((alunoOnline) => {
+        if (!ativo || !alunoOnline) return;
+
+        const alunoNormalizado = normalizarAluno(alunoOnline);
+        setAlunos((alunosAtuais) => {
+          const jaExiste = alunosAtuais.some(
+            (alunoAtual) => String(alunoAtual.id) === String(alunoNormalizado.id)
+          );
+
+          return jaExiste
+            ? alunosAtuais.map((alunoAtual) =>
+                String(alunoAtual.id) === String(alunoNormalizado.id)
+                  ? alunoNormalizado
+                  : alunoAtual
+              )
+            : [...alunosAtuais, alunoNormalizado];
+        });
+      })
+      .catch((error) => {
+        console.error("Erro ao recuperar aluno do portal online.", error);
+      });
+
+    return () => {
+      ativo = false;
+    };
+  }, [tela, alunoDoPortal, usuarioLogado]);
 
   function corDaFaixa(faixa) {
     const faixaFormatada = faixa.toLowerCase();
@@ -775,7 +2462,17 @@ function App() {
 
   function formatarData(data) {
     if (!data) return "Não informado";
+    if (data.includes("/")) return data;
     return data.split("-").reverse().join("/");
+  }
+
+  function formatarCampoData(valor) {
+    const numeros = valor.replace(/\D/g, "").slice(0, 8);
+
+    if (numeros.length <= 2) return numeros;
+    if (numeros.length <= 4) return `${numeros.slice(0, 2)}/${numeros.slice(2)}`;
+
+    return `${numeros.slice(0, 2)}/${numeros.slice(2, 4)}/${numeros.slice(4)}`;
   }
 
   const hoje = new Date().toLocaleDateString();
@@ -789,11 +2486,11 @@ function App() {
   }, 0);
 
   const totalPagos = alunos.filter(
-    (aluno) => aluno.statusPagamento === "Pago"
+    (aluno) => verificarVencimento(aluno) === "Pago"
   ).length;
 
   const totalPendentes = alunos.filter(
-    (aluno) => aluno.statusPagamento === "Pendente"
+    (aluno) => verificarVencimento(aluno) === "Pendente"
   ).length;
 
   const totalVencidos = alunos.filter(
@@ -805,8 +2502,28 @@ function App() {
   );
 
   const pagamentosAguardando = alunos.filter(
-    (aluno) => aluno.statusPagamento === "Aguardando"
+    (aluno) => {
+      if (aluno.statusPagamento === "Pago") {
+        return false;
+      }
+
+      const ultimoPagamento = obterUltimoPagamentoDoAluno(pagamentos, aluno.id);
+
+      if (ultimoPagamento) {
+        return ultimoPagamento.status === "Aguardando";
+      }
+
+      return aluno.statusPagamento === "Aguardando";
+    }
   );
+
+  const avisosPagamentoAguardando = pagamentosAguardando.map((aluno) => ({
+    id: `pagamento-${aluno.id}`,
+    mensagem: `Pagamento aguardando confirmação: ${aluno.nome}`,
+    data: aluno.dataEnvioComprovante || "Agora",
+  }));
+
+  const avisosDoPainel = [...avisosPagamentoAguardando, ...avisos];
 
   const totalArrecadado = alunos.reduce((total, aluno) => {
     return total + aluno.historicoPagamentos.reduce((soma, pagamento) => {
@@ -870,6 +2587,17 @@ function App() {
     return aluno.mensalidade + multa + calcularDiasAtraso(aluno) * jurosPorDia;
   }
 
+  function bloquearPresencaSeMensalidadeVencida(aluno) {
+    if (verificarVencimento(aluno) !== "Vencido") {
+      return false;
+    }
+
+    alert(
+      `Presenca bloqueada.\n\n${aluno.nome} esta com mensalidade vencida.\nValor atualizado: ${formatarMoeda(calcularValorComJuros(aluno))}`
+    );
+    return true;
+  }
+
   // if (
   //   (tela === "mensalidades" || tela === "pagamentos" || tela === "relatorios") &&
   //   tipoUsuario !== "diretor"
@@ -906,7 +2634,7 @@ function App() {
     return (
       <div className="telaLogin">
         <div className="caixaLogin">
-          <img src={logo} alt="Logo Ariramba" />
+          <img src={logo} alt={`Logo ${APP_NAME}`} />
           <h1>Acesso ao Sistema</h1>
 
           <input
@@ -924,54 +2652,10 @@ function App() {
           />
 
           <button
-            onClick={() => {
-              const usuarioEncontrado = usuarios.find(
-                (u) => u.usuario === usuario && u.senha === senha
-              );
-
-              if (usuarioEncontrado) {
-
-                setUsuarioLogado(usuarioEncontrado);
-
-                setTipoUsuario(usuarioEncontrado.cargo);
-                if (usuarioEncontrado.cargo === "aluno") {
-
-                  setTela("portalAluno");
-
-                  if (usuarioEncontrado.senha === "1234") {
-                    setModoEditarPerfil(true);
-
-                    alert(
-                      "Primeiro acesso detectado. Troque sua senha para continuar 🔐"
-                    );
-                  }
-
-                } else if (usuarioEncontrado.cargo === "professor") {
-
-                  setTela("portalProfessor");
-
-                  if (usuarioEncontrado.senha === "1234") {
-                    setModoEditarPerfil(true);
-
-                    alert(
-                      "Primeiro acesso detectado. Troque sua senha para continuar 🔐"
-                    );
-                  }
-
-                } else {
-
-                  setTela("dashboard");
-
-                }
-
-              } else {
-
-                alert("Usuário ou senha inválidos!");
-
-              }
-            }}
+            onClick={fazerLogin}
+            disabled={loginEmAndamento}
           >
-            Entrar no Sistema
+            {loginEmAndamento ? "Entrando..." : "Entrar no Sistema"}
           </button>
         </div>
       </div>
@@ -1027,7 +2711,7 @@ function App() {
 
                 setUsuarios([...usuarios, novoProfessor]);
 
-                alert("Professor cadastrado com sucesso 😎🔥");
+                alert("Professor cadastrado com sucesso 😎🥋");
 
                 limparFormulario();
 
@@ -1081,9 +2765,11 @@ function App() {
             />
 
             <input
-              type="date"
+              type="text"
+              inputMode="numeric"
+              placeholder="Nascimento (dd/mm/aaaa)"
               value={dataNascimento}
-              onChange={(e) => setDataNascimento(e.target.value)}
+              onChange={(e) => setDataNascimento(formatarCampoData(e.target.value))}
             />
 
             <input
@@ -1094,9 +2780,11 @@ function App() {
             />
 
             <input
-              type="date"
+              type="text"
+              inputMode="numeric"
+              placeholder="Inicio (dd/mm/aaaa)"
               value={dataInicio}
-              onChange={(e) => setDataInicio(e.target.value)}
+              onChange={(e) => setDataInicio(formatarCampoData(e.target.value))}
             />
 
             <input
@@ -1173,35 +2861,24 @@ function App() {
               onChange={(e) => setVencimento(e.target.value)}
             />
 
-            <input
-              type="file"
-              accept="image/*"
-              capture
-              onChange={(e) => {
-                const arquivo = e.target.files[0];
-
-                if (arquivo) {
-                  const leitor = new FileReader();
-
-                  leitor.onloadend = () => {
-                    setFoto(leitor.result);
-                  };
-
-                  leitor.readAsDataURL(arquivo);
-                }
-              }}
+            <FotoAlunoInputs
+              foto={foto}
+              setFoto={setFoto}
+              idBase="foto-cadastro-aluno"
             />
 
             {foto && (
-              <img
-                src={foto}
-                alt="Preview"
-                className="previewFoto"
-              />
+              <div className="areaPreviewFoto">
+                <img
+                  src={foto}
+                  alt="Preview"
+                  className="previewFoto"
+                />
+              </div>
             )}
 
-            <button onClick={salvarAluno}>
-              {alunoEditando ? "Atualizar Aluno" : "Salvar Aluno"}
+            <button onClick={salvarAluno} disabled={salvandoAluno}>
+              {salvandoAluno ? "Salvando..." : alunoEditando ? "Atualizar Aluno" : "Salvar Aluno"}
             </button>
 
             <button
@@ -1235,7 +2912,7 @@ function App() {
 
           <input
             type="text"
-            placeholder="🔍 Buscar aluno..."
+            placeholder="Buscar aluno..."
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
             className="inputBusca"
@@ -1259,6 +2936,42 @@ function App() {
                   <h2>{aluno.nome}</h2>
                   <p>Telefone: {aluno.telefone}</p>
                   <p>Faixa: {aluno.faixa}</p>
+
+                  <button
+                    type="button"
+                    className="botaoDadosCompletos"
+                    onClick={() =>
+                      setAlunoDadosAberto((idAtual) =>
+                        String(idAtual) === String(aluno.id) ? null : aluno.id
+                      )
+                    }
+                  >
+                    {String(alunoDadosAberto) === String(aluno.id)
+                      ? "Ocultar dados completos"
+                      : "Ver dados completos"}
+                  </button>
+
+                  {String(alunoDadosAberto) === String(aluno.id) && (
+                    <div className="dadosCompletosAluno">
+                      <p>Nascimento: {formatarData(aluno.dataNascimento) || "Nao informado"}</p>
+                      <p>Peso: {aluno.peso || "Nao informado"}</p>
+                      <p>Grau: {aluno.grau || "Nao informado"}</p>
+                      <p>Inicio: {formatarData(aluno.dataInicio) || "Nao informado"}</p>
+                      <p>Responsavel: {aluno.responsavel || "Nao informado"}</p>
+                      <p>Tipo sanguineo: {aluno.tipoSanguineo || "Nao informado"}</p>
+                      <p>Saude: {aluno.saude || "Nao informado"}</p>
+                      <p>Medicamentos: {aluno.medicamentos || "Nao informado"}</p>
+                      <p>Observacoes: {aluno.observacoes || "Nao informado"}</p>
+                      {tipoUsuario === "diretor" && (
+                        <>
+                          <p>Vencimento: dia {aluno.vencimento || "--"}</p>
+                          <p>Status do pagamento: {verificarVencimento(aluno)}</p>
+                          <p>Presencas registradas: {aluno.presencas?.length || 0}</p>
+                        </>
+                      )}
+                    </div>
+                  )}
+
                   <p>Mensalidade: {formatarMoeda(aluno.mensalidade)}</p>
                   <p>
                     Último pagamento:{" "}
@@ -1276,11 +2989,11 @@ function App() {
                       fontWeight: "bold",
                     }}
                   >
-                    {aluno.statusPagamento === "Pago"
+                    {verificarVencimento(aluno) === "Pago"
                       ? "✅ Pago"
                       : "❌ Pendente"}
                   </p>
-                  {aluno.statusPagamento === "Pendente" ? (
+                  {verificarVencimento(aluno) !== "Pago" ? (
                     <Botao
                       tipo="success"
                       onClick={() => marcarComoPago(aluno.id)}
@@ -1292,10 +3005,7 @@ function App() {
                       Cancelar Confirmação
                     </button>
                   )}
-
-                  {aluno.grau && <p>Grau: {aluno.grau}</p>}
-
-                  <button onClick={() => setAlunoCarteirinha(aluno)}>
+                  <button onClick={() => abrirCarteirinha(aluno)}>
                     Gerar Carteirinha
                   </button>
 
@@ -1319,7 +3029,7 @@ function App() {
 
                         setUsuarios(usuariosAtualizados);
 
-                        alert("Senha resetada para 1234 🔐");
+                        alert("Senha resetada para 1234.");
                       }}
                     >
                       Resetar Senha
@@ -1593,19 +3303,37 @@ function App() {
                   {aluno.ultimoPagamento || "Nenhum pagamento"}
                 </p>
 
-                {aluno.comprovantePagamento && (
+                {(aluno.comprovantePagamento || aluno.statusPagamento === "Aguardando") && (
                   <div className="cardAluno">
                     <div className="comprovantePreview">
                       <p>📎 Comprovante enviado:</p>
 
-                      <img
-                        src={aluno.comprovantePagamento}
-                        alt="Comprovante"
-                        className="fotoAlunoLista"
-                        onClick={() =>
-                          setImagemComprovante(aluno.comprovantePagamento)
-                        }
-                      />
+                      {aluno.comprovantePagamento ? (
+                        comprovanteEhImagem(aluno.comprovantePagamento) ? (
+                          <img
+                            src={aluno.comprovantePagamento}
+                            alt="Comprovante"
+                            className="imagemComprovante"
+                            onClick={() =>
+                              setImagemComprovante(aluno.comprovantePagamento)
+                            }
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            className="arquivoComprovante"
+                            onClick={() =>
+                              abrirArquivoComprovante(aluno.comprovantePagamento)
+                            }
+                          >
+                            Abrir comprovante
+                          </button>
+                        )
+                      ) : (
+                        <p className="avisoSemComprovante">
+                          Pagamento informado, mas nenhum comprovante foi anexado.
+                        </p>
+                      )}
                     </div>
 
                     <p>
@@ -1631,6 +3359,7 @@ function App() {
                 <p
                   style={{
                     color:
+                      verificarVencimento(aluno) !== "Pago" &&
                       aluno.statusPagamento === "Aguardando"
                         ? "#facc15"
 
@@ -1646,7 +3375,8 @@ function App() {
                     fontSize: "18px",
                   }}
                 >
-                  {aluno.statusPagamento === "Aguardando" &&
+                  {verificarVencimento(aluno) !== "Pago" &&
+                    aluno.statusPagamento === "Aguardando" &&
                     "⏳ Aguardando confirmação"}
 
                   {verificarVencimento(aluno) === "Pago" &&
@@ -1660,7 +3390,7 @@ function App() {
                     "⚠️ Vencido"}
                 </p>
 
-                {aluno.statusPagamento === "Pendente" ? (
+                {verificarVencimento(aluno) !== "Pago" ? (
                   <button onClick={() => marcarComoPago(aluno.id)}>
                     Confirmar Pagamento
                   </button>
@@ -1750,7 +3480,7 @@ function App() {
                 <p>
                   Status:
                   {" "}
-                  {aluno.statusPagamento === "Pago"
+                  {verificarVencimento(aluno) === "Pago"
                     ? "✅ Pago"
                     : "❌ Pendente"}
                 </p>
@@ -1827,8 +3557,19 @@ function App() {
 
               if (!confirmar) return;
 
+              if (supabaseConfigurado) {
+                alert("O historico online nao pode ser apagado apenas neste dispositivo.");
+                return;
+              }
+
               setPresencas([]);
-              localStorage.removeItem("presencas_ariramba");
+              setAlunos((prev) =>
+                prev.map((aluno) => ({
+                  ...aluno,
+                  presencas: [],
+                }))
+              );
+              localStorage.removeItem(STORAGE_KEYS.presencas);
 
               alert("Histórico apagado com sucesso 🗑️");
             }}
@@ -1920,15 +3661,7 @@ function App() {
             </button>
 
             <button
-              onClick={() => {
-                setTela("inicio");
-                setUsuario("");
-                setSenha("");
-                setTipoUsuario("");
-                setUsuarioLogado(null);
-                setModoEditarPerfil(false);
-                localStorage.removeItem("usuario_logado_ariramba");
-              }}
+              onClick={sairDoSistema}
             >
               Sair
             </button>
@@ -1984,7 +3717,6 @@ function App() {
                 <input
                   type="file"
                   accept="image/*"
-                  capture
                   onChange={(e) => {
                     const arquivo = e.target.files[0];
 
@@ -2052,13 +3784,47 @@ function App() {
 
           <div className="cardAluno">
 
+            {alunoDoPortal?.foto && (
+              <img
+                src={alunoDoPortal.foto}
+                alt={alunoDoPortal.nome}
+                className="fotoAlunoLista"
+              />
+            )}
+
             <h2>{usuarioLogado?.nome}</h2>
 
-            <p>Área do aluno em desenvolvimento 🥋</p>
+            <p>Resumo financeiro e dados de acesso do aluno.</p>
+
+            <button
+              type="button"
+              className="botaoDadosCompletos"
+              onClick={() => setMostrarDadosPortalAluno((mostrar) => !mostrar)}
+            >
+              {mostrarDadosPortalAluno ? "Ocultar meus dados" : "Ver meus dados"}
+            </button>
+
+            {mostrarDadosPortalAluno && (
+              <div className="dadosCompletosAluno">
+                <p>Nome: {alunoDoPortal?.nome || usuarioLogado?.nome || "Nao informado"}</p>
+                <p>Nascimento: {formatarData(alunoDoPortal?.dataNascimento) || "Nao informado"}</p>
+                <p>Telefone: {alunoDoPortal?.telefone || "Nao informado"}</p>
+                <p>Peso: {alunoDoPortal?.peso || "Nao informado"}</p>
+                <p>Faixa: {alunoDoPortal?.faixa || "Nao informado"}</p>
+                <p>Grau: {alunoDoPortal?.grau || "Nao informado"}</p>
+                <p>Inicio: {formatarData(alunoDoPortal?.dataInicio) || "Nao informado"}</p>
+                <p>Responsavel: {alunoDoPortal?.responsavel || "Nao informado"}</p>
+                <p>Tipo sanguineo: {alunoDoPortal?.tipoSanguineo || "Nao informado"}</p>
+                <p>Saude: {alunoDoPortal?.saude || "Nao informado"}</p>
+                <p>Medicamentos: {alunoDoPortal?.medicamentos || "Nao informado"}</p>
+                <p>Observacoes: {alunoDoPortal?.observacoes || "Nao informado"}</p>
+              </div>
+            )}
 
             <p
               style={{
                 color:
+                  verificarVencimento(alunoDoPortal) !== "Pago" &&
                   alunoDoPortal?.statusPagamento === "Aguardando"
                     ? "#facc15"
 
@@ -2076,7 +3842,8 @@ function App() {
             >
               Status da mensalidade:{" "}
 
-              {alunoDoPortal?.statusPagamento === "Aguardando"
+              {verificarVencimento(alunoDoPortal) !== "Pago" &&
+              alunoDoPortal?.statusPagamento === "Aguardando"
                 ? "⏳ Aguardando confirmação"
 
                 : verificarVencimento(alunoDoPortal) === "Pago"
@@ -2098,7 +3865,7 @@ function App() {
 
             {verificarVencimento(alunoDoPortal) === "Vencido" && (
               <div className="cardAluno">
-                <h3>⚠️ Mensalidade vencida</h3>
+                <h3>Mensalidade vencida</h3>
                 <p>
                   Valor atualizado:{" "}
                   {formatarMoeda(calcularValorComJuros(alunoDoPortal))}
@@ -2109,7 +3876,8 @@ function App() {
               </div>
             )}
 
-            {alunoDoPortal?.statusPagamento === "Aguardando" && (
+            {verificarVencimento(alunoDoPortal) !== "Pago" &&
+              alunoDoPortal?.statusPagamento === "Aguardando" && (
               <div className="cardAluno">
                 <h3>⏳ Pagamento enviado</h3>
 
@@ -2119,7 +3887,7 @@ function App() {
               </div>
             )}
 
-            <p>Em breve:
+            <p hidden>Em breve:
               PIX, mensalidades, histórico e carteirinha.
             </p>
 
@@ -2185,23 +3953,10 @@ function App() {
                   onChange={(e) => setConfirmarSenha(e.target.value)}
                 />
 
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture
-                  onChange={(e) => {
-                    const arquivo = e.target.files[0];
-
-                    if (arquivo) {
-                      const leitor = new FileReader();
-
-                      leitor.onloadend = () => {
-                        setFoto(leitor.result);
-                      };
-
-                      leitor.readAsDataURL(arquivo);
-                    }
-                  }}
+                <FotoAlunoInputs
+                  foto={foto}
+                  setFoto={setFoto}
+                  idBase="foto-portal-aluno"
                 />
 
                 {foto && (
@@ -2231,7 +3986,7 @@ function App() {
                   value={`PIX - ${usuarioLogado?.nome} - ${formatarMoeda(alunoDoPortal?.mensalidade)}`}
                 />
 
-                <p>Chave PIX: 002.450.712-10</p>
+                <p>Chave PIX: 92985631757</p>
                 <p>
                   Valor: {formatarMoeda(alunoDoPortal?.mensalidade)}
                 </p>
@@ -2239,37 +3994,40 @@ function App() {
               </div>
             )}
 
-            <input
-              type="file"
-              accept="image/*"
-              capture
-              onChange={(e) => {
+            {verificarVencimento(alunoDoPortal) !== "Pago" && (
+              <div className="cardAluno areaComprovanteAluno">
+                <h3>Enviar comprovante</h3>
+                <p>
+                  Anexe a foto ou PDF do pagamento. O diretor vai conferir a
+                  data do comprovante antes de confirmar.
+                </p>
 
-                const arquivo = e.target.files[0];
+                <label className="botaoArquivoComprovante">
+                  Selecionar comprovante
+                  <input
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                    onChange={(e) => {
+                      const arquivo = e.target.files[0];
 
-                if (arquivo) {
+                      if (arquivo) {
+                        const leitor = new FileReader();
 
-                  const leitor = new FileReader();
+                        leitor.onloadend = () => {
+                          informarPagamento(
+                            alunoDoPortal.id,
+                            leitor.result
+                          );
+                        };
 
-                  leitor.onloadend = () => {
+                        leitor.readAsDataURL(arquivo);
+                      }
+                    }}
+                  />
+                </label>
 
-                    informarPagamento(
-                      alunoDoPortal.id,
-                      leitor.result
-                    );
-
-                  };
-
-                  leitor.readAsDataURL(arquivo);
-                }
-              }}
-            />
-
-            <button
-              onClick={() => informarPagamento(alunoDoPortal.id)}
-            >
-              Informar Pagamento
-            </button>
+              </div>
+            )}
 
             <button onClick={() => setMostrarCarteirinhaAluno(!mostrarCarteirinhaAluno)}>
               {mostrarCarteirinhaAluno
@@ -2325,10 +4083,16 @@ function App() {
                   Vencimento: dia {alunoDoPortal?.vencimento || "--"}
                 </p>
 
-                <QRCodeCanvas
-                  value={`aluno-${alunoDoPortal?.id}`}
-                  size={120}
-                />
+                <div id="qrCarteirinhaAluno">
+                  <QRCodeCanvas
+                    value={`aluno-${alunoDoPortal?.id}`}
+                    size={120}
+                  />
+                </div>
+
+                <button onClick={() => baixarCarteirinhaPDF(alunoDoPortal)}>
+                  Baixar Carteirinha PDF
+                </button>
 
               </div>
             )}
@@ -2356,15 +4120,15 @@ function App() {
             )}
 
             <button
-              onClick={() => {
-                setTela("inicio");
-                setUsuario("");
-                setSenha("");
-                setTipoUsuario("");
-                setUsuarioLogado(null);
-                setModoEditarPerfil(false);
-                localStorage.removeItem("usuario_logado_ariramba");
-              }}
+              type="button"
+              className="botaoVoltar"
+              onClick={voltarResumoPortalAluno}
+            >
+              Voltar
+            </button>
+
+            <button
+              onClick={sairDoSistema}
             >
               Sair
             </button>
@@ -2415,6 +4179,14 @@ function App() {
 
   return (
     <div className="layoutSistema">
+      <div className="menuDesktop">
+        <Menu
+          setTela={setTela}
+          tipoUsuario={tipoUsuario}
+          setMenuAberto={setMenuAberto}
+        />
+      </div>
+
       {menuAberto && (
         <>
           <div
@@ -2458,15 +4230,7 @@ function App() {
 
           <button
             className="botaoLogout"
-            onClick={() => {
-              setTela("inicio");
-              setUsuario("");
-              setSenha("");
-              setTipoUsuario("");
-              setUsuarioLogado(null);
-              setModoEditarPerfil(false);
-              localStorage.removeItem("usuario_logado_ariramba");
-            }}
+            onClick={sairDoSistema}
           >
             Sair do Sistema
           </button>
@@ -2482,10 +4246,10 @@ function App() {
         <div className="cardAluno">
           <h2>🔔 Notificações do Sistema</h2>
 
-          {avisos.length === 0 ? (
+          {avisosDoPainel.length === 0 ? (
             <p>Nenhuma notificação no momento.</p>
           ) : (
-            avisos.slice(0, 5).map((aviso) => (
+            avisosDoPainel.slice(0, 5).map((aviso) => (
               <p key={aviso.id}>
                 {aviso.mensagem} - {aviso.data}
               </p>
@@ -2497,6 +4261,77 @@ function App() {
           </button>
 
         </div>
+
+        {tipoUsuario === "diretor" && (
+          <div className="cardAluno armazenamentoLocal">
+            <h2>💾 Armazenamento</h2>
+
+            <p
+              className={
+                supabaseConfigurado
+                  ? "statusBancoOnline"
+                  : "statusBancoLocal"
+              }
+            >
+              {!supabaseConfigurado
+                ? "Modo local até configurar o Supabase"
+                : diretorOnlineLogado
+                  ? "Banco online conectado como diretor"
+                  : "Banco online configurado, login atual é local"}
+            </p>
+
+            <p>
+              {!supabaseConfigurado
+                ? "Alunos, usuários, pagamentos e presenças estão salvos neste navegador."
+                : diretorOnlineLogado
+                  ? "Alunos, pagamentos e presenças sincronizam no banco online."
+                  : "Entre com o e-mail do diretor do Supabase para enviar ou carregar alunos online."}
+            </p>
+
+            {erroArmazenamento && (
+              <p className="alertaArmazenamento">
+                {erroArmazenamento}
+              </p>
+            )}
+
+            <button onClick={exportarBackup}>
+              Baixar Backup
+            </button>
+
+            {supabaseConfigurado && (
+              <>
+                <button
+                  onClick={enviarAlunosParaBancoOnline}
+                  disabled={sincronizacaoOnline !== "" || !diretorOnlineLogado}
+                >
+                  {sincronizacaoOnline === "enviando"
+                    ? "Enviando..."
+                    : "Enviar Alunos e Acessos para Banco Online"}
+                </button>
+
+                <button
+                  onClick={carregarAlunosDoBancoOnline}
+                  disabled={sincronizacaoOnline !== "" || !diretorOnlineLogado}
+                >
+                  {sincronizacaoOnline === "carregando"
+                    ? "Carregando..."
+                    : "Carregar Alunos do Banco Online"}
+                </button>
+              </>
+            )}
+
+            <label className="botaoImportarBackup" htmlFor="importarBackupSistema">
+              Restaurar Backup
+            </label>
+
+            <input
+              id="importarBackupSistema"
+              type="file"
+              accept="application/json,.json"
+              onChange={importarBackup}
+            />
+          </div>
+        )}
 
         <div className="estatisticas">
           <CardEstatistica
@@ -2577,7 +4412,12 @@ function App() {
 
         <div className="cardsDashboard">
           {tipoUsuario === "diretor" && (
-            <button onClick={() => setTela("cadastro")}>
+            <button
+              onClick={() => {
+                limparFormulario();
+                setTela("cadastro");
+              }}
+            >
               Cadastrar Aluno
             </button>
           )}
@@ -2606,15 +4446,7 @@ function App() {
           )}
 
           <button
-            onClick={() => {
-              setTela("inicio");
-              setUsuario("");
-              setSenha("");
-              setTipoUsuario("");
-              setUsuarioLogado(null);
-              setModoEditarPerfil(false);
-              localStorage.removeItem("usuario_logado_ariramba");
-            }}
+            onClick={sairDoSistema}
           >
             Sair
           </button>
@@ -2667,6 +4499,7 @@ function App() {
   }) {
     return (
       <button
+        type="button"
         className={`botao ${tipo} ${className}`}
         onClick={onClick}
       >
@@ -2701,11 +4534,11 @@ function App() {
     return (
       <aside className="menuLateral">
 
-        <img src={logo} alt="Logo Ariramba" />
+        <img src={logo} alt={`Logo ${APP_NAME}`} />
 
-        <h2>ARIRAMBA</h2>
+        <h2>SIMÃO TEAM</h2>
 
-        <p>JIU-JITSU SCHOOL</p>
+        <p>JIU-JITSU</p>
 
         {tipoUsuario !== "aluno" && (
           <button onClick={() => navegar("dashboard")}>
@@ -2714,7 +4547,12 @@ function App() {
         )}
 
         {tipoUsuario === "diretor" && (
-          <button onClick={() => navegar("cadastro")}>
+          <button
+            onClick={() => {
+              limparFormulario();
+              navegar("cadastro");
+            }}
+          >
             Cadastrar Aluno
           </button>
         )}
@@ -2759,7 +4597,7 @@ function App() {
           </>
         )}
 
-        <button onClick={() => navegar("inicio")}>
+        <button onClick={sairDoSistema}>
           Sair
         </button>
 
