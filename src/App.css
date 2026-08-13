@@ -647,6 +647,57 @@ button:disabled,
   gap: 10px;
 }
 
+.editorFotoAluno {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.quadroEditorFoto {
+  width: 180px;
+  height: 180px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 2px solid var(--orange);
+  background: #111827;
+  cursor: grab;
+  touch-action: none;
+}
+
+.quadroEditorFoto:active {
+  cursor: grabbing;
+}
+
+.imagemEditorFoto {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  max-width: none;
+  object-fit: fill;
+  user-select: none;
+  -webkit-user-drag: none;
+  will-change: transform;
+}
+
+.controleZoomFoto {
+  width: 220px;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: white;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.controleZoomFoto input {
+  flex: 1;
+  accent-color: var(--orange);
+}
+
 .opcoesFotoAluno {
   width: 100%;
   display: flex;

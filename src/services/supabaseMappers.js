@@ -1,4 +1,9 @@
 export function alunoParaBanco(aluno) {
+  const statusPagamento = aluno.statusPagamento || aluno.status_pagamento || "Pendente";
+  const statusAlunoValido = ["Pendente", "Aguardando", "Pago"].includes(statusPagamento)
+    ? statusPagamento
+    : "Pendente";
+
   return {
     id: uuidValido(aluno.id) ? aluno.id : undefined,
     nome: aluno.nome,
@@ -6,19 +11,19 @@ export function alunoParaBanco(aluno) {
     faixa: aluno.faixa || null,
     grau: aluno.grau || null,
     responsavel: aluno.responsavel || null,
-    data_nascimento: converterDataBrasilParaISO(aluno.dataNascimento),
-    data_inicio: converterDataBrasilParaISO(aluno.dataInicio),
+    data_nascimento: converterDataBrasilParaISO(aluno.dataNascimento || aluno.data_nascimento),
+    data_inicio: converterDataBrasilParaISO(aluno.dataInicio || aluno.data_inicio),
     peso: aluno.peso ? Number(aluno.peso) : null,
     mensalidade: Number(aluno.mensalidade || 0),
     vencimento: aluno.vencimento ? Number(aluno.vencimento) : null,
-    status_pagamento: aluno.statusPagamento || "Pendente",
-    ultimo_pagamento: converterDataBrasilParaISO(aluno.ultimoPagamento),
-    tipo_sanguineo: aluno.tipoSanguineo || null,
+    status_pagamento: statusAlunoValido,
+    ultimo_pagamento: converterDataBrasilParaISO(aluno.ultimoPagamento || aluno.ultimo_pagamento),
+    tipo_sanguineo: aluno.tipoSanguineo || aluno.tipo_sanguineo || null,
     saude: aluno.saude || null,
     medicamentos: aluno.medicamentos || null,
     observacoes: aluno.observacoes || null,
-    observacao_financeira: aluno.observacaoFinanceira || null,
-    foto_url: aluno.fotoUrl || aluno.foto || null,
+    observacao_financeira: aluno.observacaoFinanceira || aluno.observacao_financeira || null,
+    foto_url: aluno.fotoUrl || aluno.foto || aluno.foto_url || null,
     academia_id: aluno.academiaId || aluno.academia_id || undefined,
     auth_user_id: aluno.authUserId || aluno.auth_user_id || undefined,
   };

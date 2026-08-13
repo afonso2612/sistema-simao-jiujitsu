@@ -26,6 +26,17 @@ export async function sairDoSupabase() {
   if (error) throw error;
 }
 
+export async function atualizarSenhaUsuarioAtual(novaSenha) {
+  exigirSupabase();
+
+  const { data, error } = await supabase.auth.updateUser({
+    password: novaSenha,
+  });
+
+  if (error) throw error;
+  return data;
+}
+
 export async function obterSessaoSupabase() {
   if (!supabaseConfigurado || !supabase) return null;
 
