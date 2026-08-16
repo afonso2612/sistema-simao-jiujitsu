@@ -706,6 +706,10 @@ function limitarTempo(promise, tempoMs, mensagem) {
   ]);
 }
 
+function emailValido(valor) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(valor || "").trim());
+}
+
 function App() {
   const [tela, setTela] = useState("inicio");
 
@@ -1013,6 +1017,45 @@ function App() {
   }, [tela, tipoUsuario]);
 
   useEffect(() => {
+    let ativo = true;
+
+    function aplicarUsuarioLogado(usuarioRecuperado) {
+      if (!ativo) return;
+
+      setUsuarioLogado(usuarioRecuperado);
+      setTipoUsuario(usuarioRecuperado.cargo);
+
+      if (usuarioRecuperado.cargo === "aluno") {
+        setTela("portalAluno");
+      } else if (usuarioRecuperado.cargo === "professor") {
+        setTela("portalProfessor");
+      } else {
+        setTela("dashboard");
+      }
+    }
+
+    async function restaurarSessaoInicial() {
+      if (supabaseConfigurado) {
+        try {
+          const perfil = await obterPerfilSupabase();
+
+          if (perfil?.cargo && perfil?.academia_id) {
+            aplicarUsuarioLogado({
+              id: perfil.id,
+              usuario: perfil.email || perfil.id,
+              cargo: perfil.cargo,
+              nome: perfil.nome || perfil.id,
+              alunoId: perfil.aluno_id,
+              academiaId: perfil.academia_id,
+              origem: "supabase",
+            });
+            return;
+          }
+        } catch (error) {
+          console.error("Erro ao recuperar sessao do Supabase.", error);
+        }
+      }
+
     const usuarioSalvo =
       localStorage.getItem(STORAGE_KEYS.usuarioLogado) ||
       localStorage.getItem("usuario_logado_ariramba");
@@ -1029,52 +1072,11 @@ function App() {
         return;
       }
 
-      setUsuarioLogado(usuarioRecuperado);
-      setTipoUsuario(usuarioRecuperado.cargo);
-
-      if (usuarioRecuperado.cargo === "aluno") {
-        setTela("portalAluno");
-      } else if (usuarioRecuperado.cargo === "professor") {
-        setTela("portalProfessor");
-      } else {
-        setTela("dashboard");
-      }
-
-      return;
+      aplicarUsuarioLogado(usuarioRecuperado);
+    }
     }
 
-    if (!supabaseConfigurado) return;
-
-    let ativo = true;
-
-    obterPerfilSupabase()
-      .then((perfil) => {
-        if (!ativo || !perfil?.cargo || !perfil?.academia_id) return;
-
-        const usuarioOnline = {
-          id: perfil.id,
-          usuario: perfil.email || perfil.id,
-          cargo: perfil.cargo,
-          nome: perfil.nome || perfil.id,
-          alunoId: perfil.aluno_id,
-          academiaId: perfil.academia_id,
-          origem: "supabase",
-        };
-
-        setUsuarioLogado(usuarioOnline);
-        setTipoUsuario(perfil.cargo);
-
-        if (perfil.cargo === "aluno") {
-          setTela("portalAluno");
-        } else if (perfil.cargo === "professor") {
-          setTela("portalProfessor");
-        } else {
-          setTela("dashboard");
-        }
-      })
-      .catch((error) => {
-        console.error("Erro ao recuperar sessao do Supabase.", error);
-      });
+    restaurarSessaoInicial();
 
     return () => {
       ativo = false;
@@ -1291,7 +1293,7 @@ function App() {
       componenteAtivo = false;
       clearInterval(intervalo);
     };
-  }, [tela, usuarioOnlineLogado]);
+  }, [tela, usuarioOnlineLogado, usuarioLogado?.id, usuarioLogado?.academiaId]);
 
   useEffect(() => {
     if (!usuarioOnlineLogado || !supabase) return;
@@ -1448,6 +1450,23 @@ function App() {
       usuarioInformado || usuarioAtualDoAluno?.usuario || criarUsuarioAluno(nome, usuarios);
     const senhaNormalizada =
       senhaInformada || (!alunoEditando || !usuarioAtualDoAluno ? "1234" : "");
+
+    if (diretorOnlineLogado && !alunoEditando) {
+      if (!usuarioInformado) {
+        alert("Informe o e-mail do aluno para criar o acesso online.");
+        return;
+      }
+
+      if (!emailValido(usuarioInformado)) {
+        alert("Informe um e-mail válido para criar o acesso online do aluno.");
+        return;
+      }
+
+      if (!senhaInformada || senhaInformada.length < 6) {
+        alert("Informe uma senha inicial com pelo menos 6 caracteres para criar o acesso online do aluno.");
+        return;
+      }
+    }
 
     if (
       usuarioNormalizado !== "" &&
@@ -3445,9 +3464,10 @@ function App() {
             />
 
             <input
-              type="text"
-              placeholder="Usuário do aluno"
+              type="email"
+              placeholder="E-mail do aluno"
               value={usuarioAluno}
+              autoComplete="off"
               onChange={(e) => setUsuarioAluno(e.target.value)}
             />
 
@@ -3455,6 +3475,7 @@ function App() {
               type="password"
               placeholder="Senha inicial"
               value={senhaAluno}
+              autoComplete="new-password"
               onChange={(e) => setSenhaAluno(e.target.value)}
             />
 
