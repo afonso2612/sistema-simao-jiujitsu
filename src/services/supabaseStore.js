@@ -242,25 +242,14 @@ export async function obterFotoAlunoOnline(id) {
   return fotoPublica(data?.foto_url);
 }
 
-export async function buscarUsuarioSistemaOnline(usuario) {
+export async function buscarUsuarioSistemaOnline(usuario, senha) {
   exigirSupabase();
 
-  const { data: usuarioRpc, error: erroRpc } = await supabase
-    .rpc("verificar_usuario_sistema", { usuario_login: usuario })
-    .maybeSingle();
-
-  if (!erroRpc && usuarioRpc) {
-    return usuarioSistemaDoBanco(usuarioRpc);
-  }
-
-  if (erroRpc && !["42883", "PGRST202"].includes(erroRpc.code)) {
-    console.warn("Falha ao usar login seguro de usuarios_sistema. Tentando consulta legada.", erroRpc);
-  }
-
   const { data, error } = await supabase
-    .from("usuarios_sistema")
-    .select("*")
-    .ilike("usuario", usuario)
+    .rpc("verificar_usuario_sistema", {
+      usuario_login: usuario,
+      senha_login: senha,
+    })
     .maybeSingle();
 
   if (error) throw error;
@@ -414,6 +403,16 @@ export async function listarPresencasOnline() {
   return data.map(presencaDoBanco);
 }
 
+async function pagamentoVisualizavel(pagamento) {
+  const comprovantePath = pagamento.comprovante_url || "";
+
+  return {
+    ...pagamento,
+    comprovante_path: comprovantePath,
+    comprovante_url: await arquivoVisualizavel("comprovantes", comprovantePath),
+  };
+}
+
 export async function listarPagamentosOnline() {
   exigirSupabase();
 
@@ -423,13 +422,33 @@ export async function listarPagamentosOnline() {
     .order("criado_em", { ascending: false });
 
   if (error) throw error;
-  return Promise.all(
-    data.map(async (pagamento) => ({
-      ...pagamento,
-      comprovante_path: pagamento.comprovante_url || "",
-      comprovante_url: await arquivoVisualizavel("comprovantes", pagamento.comprovante_url),
-    }))
-  );
+  return Promise.all(data.map(pagamentoVisualizavel));
+}
+
+export async function listarPagamentosDoAlunoParaScannerOnline(alunoId) {
+  exigirSupabase();
+
+  const { data, error } = await supabase
+    .from("pagamentos")
+    .select("status,criado_em,data_pagamento")
+    .eq("aluno_id", alunoId);
+
+  if (error) throw error;
+  return data;
+}
+
+export async function verificarPresencaAlunoNaDataOnline(alunoId, dataISO) {
+  exigirSupabase();
+
+  const { data, error } = await supabase
+    .from("presencas")
+    .select("id")
+    .eq("aluno_id", alunoId)
+    .eq("data", dataISO)
+    .limit(1);
+
+  if (error) throw error;
+  return data.length > 0;
 }
 
 export async function registrarPresencaOnline(presenca) {
@@ -513,7 +532,7 @@ export async function salvarPagamentoOnline(pagamento) {
     .single();
 
   if (error) throw error;
-  return data;
+  return pagamentoVisualizavel(data);
 }
 
 export async function atualizarPagamentoOnlinePorId(id, campos) {
@@ -550,13 +569,15 @@ export async function confirmarPagamentoOnline(pagamento) {
   if (erroAtualizar) throw erroAtualizar;
 
   if (atualizados && atualizados.length > 0) {
-    return atualizados[0];
+    return Promise.all(atualizados.map(pagamentoVisualizavel));
   }
 
-  return salvarPagamentoOnline({
-    ...pagamento,
-    status: "Pago",
-  });
+  return [
+    await salvarPagamentoOnline({
+      ...pagamento,
+      status: "Pago",
+    }),
+  ];
 }
 
 export async function enviarArquivoOnline(bucket, caminho, arquivo) {
@@ -662,7 +683,6 @@ function usuarioSistemaDoBanco(data) {
   return {
     id: data.id,
     usuario: data.usuario,
-    senha: data.senha,
     cargo: data.cargo,
     nome: data.nome,
     alunoId: data.aluno_id,

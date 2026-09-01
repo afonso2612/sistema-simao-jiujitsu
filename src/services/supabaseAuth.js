@@ -46,15 +46,19 @@ export async function obterSessaoSupabase() {
   return data.session;
 }
 
-export async function obterPerfilSupabase() {
+export async function obterPerfilSupabase(userIdInformado = "") {
   exigirSupabase();
 
-  const { data: sessionData, error: sessionError } =
-    await supabase.auth.getSession();
+  let userId = userIdInformado;
 
-  if (sessionError) throw sessionError;
+  if (!userId) {
+    const { data: sessionData, error: sessionError } =
+      await supabase.auth.getSession();
 
-  const userId = sessionData.session?.user?.id;
+    if (sessionError) throw sessionError;
+
+    userId = sessionData.session?.user?.id;
+  }
 
   if (!userId) return null;
 

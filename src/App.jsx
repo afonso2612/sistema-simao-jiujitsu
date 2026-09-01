@@ -6,7 +6,7 @@ import { Html5Qrcode } from "html5-qrcode";
 import capa from "./assets/capa.webp";
 import jsPDF from "jspdf";
 import { supabase, supabaseConfigurado } from "./lib/supabaseClient";
-import { atualizarSenhaUsuarioAtual, entrarComEmailSenha, obterPerfilSupabase, sairDoSupabase } from "./services/supabaseAuth";
+import { atualizarSenhaUsuarioAtual, entrarComEmailSenha, obterPerfilSupabase, obterSessaoSupabase, sairDoSupabase } from "./services/supabaseAuth";
 import {
   atualizarPerfilAlunoOnline,
   atualizarEmailAlunoAuthOnline,
@@ -19,6 +19,7 @@ import {
   limparAvisosOnline,
   listarAvisosOnline,
   listarAlunosOnline,
+  listarPagamentosDoAlunoParaScannerOnline,
   listarPagamentosOnline,
   listarPresencasOnline,
   migrarAlunosOnline,
@@ -33,6 +34,7 @@ import {
   salvarAlunoOnline,
   salvarPagamentoOnline,
   salvarUsuarioSistemaOnline,
+  verificarPresencaAlunoNaDataOnline,
 } from "./services/supabaseStore";
 
 const APP_NAME = "Simão Tavares Top Team";
@@ -706,6 +708,10 @@ function limitarTempo(promise, tempoMs, mensagem) {
   ]);
 }
 
+function esperar(tempoMs) {
+  return new Promise((resolve) => setTimeout(resolve, tempoMs));
+}
+
 function emailValido(valor) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(valor || "").trim());
 }
@@ -827,6 +833,7 @@ function App() {
   const [alunoEditando, setAlunoEditando] = useState(null);
   const [sincronizacaoOnline, setSincronizacaoOnline] = useState("");
   const [loginEmAndamento, setLoginEmAndamento] = useState(false);
+  const [sessaoSupabasePronta, setSessaoSupabasePronta] = useState(false);
   const [salvandoAluno, setSalvandoAluno] = useState(false);
   const [horaAtual, setHoraAtual] = useState(
     new Date().toLocaleTimeString()
@@ -834,12 +841,12 @@ function App() {
   const diretorOnlineLogado =
     supabaseConfigurado &&
     tipoUsuario === "diretor" &&
-    (usuarioLogado?.origem === "supabase" ||
-      usuarioLogado?.origem === "usuarios_sistema");
+    usuarioLogado?.origem === "supabase" &&
+    sessaoSupabasePronta;
   const usuarioOnlineLogado =
     supabaseConfigurado &&
-    (usuarioLogado?.origem === "supabase" ||
-      usuarioLogado?.origem === "usuarios_sistema");
+    usuarioLogado?.origem === "supabase" &&
+    sessaoSupabasePronta;
   const equipeOnlineLogada =
     usuarioOnlineLogado &&
     (tipoUsuario === "diretor" || tipoUsuario === "professor");
@@ -958,7 +965,7 @@ function App() {
       } catch (error) {
         console.error("Erro ao limpar avisos online.", error);
         alert(`Nao foi possivel limpar as notificacoes no banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
-        await carregarDadosOnlineNoEstado().catch(() => {});
+        await listarAvisosOnline().then(setAvisos).catch(() => {});
       }
     }
   }
@@ -1037,9 +1044,20 @@ function App() {
     async function restaurarSessaoInicial() {
       if (supabaseConfigurado) {
         try {
-          const perfil = await obterPerfilSupabase();
+          let perfil = null;
+
+          for (let tentativa = 0; tentativa < 3; tentativa += 1) {
+            perfil = await obterPerfilSupabase();
+
+            if (perfil?.cargo && perfil?.academia_id) {
+              break;
+            }
+
+            await esperar(350);
+          }
 
           if (perfil?.cargo && perfil?.academia_id) {
+            setSessaoSupabasePronta(true);
             aplicarUsuarioLogado({
               id: perfil.id,
               usuario: perfil.email || perfil.id,
@@ -1052,13 +1070,12 @@ function App() {
             return;
           }
         } catch (error) {
+          setSessaoSupabasePronta(false);
           console.error("Erro ao recuperar sessao do Supabase.", error);
         }
       }
 
-    const usuarioSalvo =
-      localStorage.getItem(STORAGE_KEYS.usuarioLogado) ||
-      localStorage.getItem("usuario_logado_ariramba");
+    const usuarioSalvo = localStorage.getItem(STORAGE_KEYS.usuarioLogado);
 
     if (usuarioSalvo) {
       let usuarioRecuperado;
@@ -1068,7 +1085,14 @@ function App() {
       } catch (error) {
         console.warn("Sessão salva inválida. Login será solicitado novamente.", error);
         localStorage.removeItem(STORAGE_KEYS.usuarioLogado);
-        localStorage.removeItem("usuario_logado_ariramba");
+        return;
+      }
+
+      if (
+        supabaseConfigurado &&
+        ["supabase", "usuarios_sistema"].includes(usuarioRecuperado?.origem)
+      ) {
+        localStorage.removeItem(STORAGE_KEYS.usuarioLogado);
         return;
       }
 
@@ -1103,37 +1127,52 @@ function App() {
 
       const codigoLido = String(resultado || "").trim();
       let presencasParaBusca = presencas;
+      let presencaOnlineJaRegistrada = null;
       let alunoEncontrado = alunos.find(
         (aluno) => `aluno-${aluno.id}` === codigoLido
       );
 
       if (!alunoEncontrado && supabaseConfigurado) {
         try {
-          const [alunosOnline, presencasOnline, pagamentosOnline] = await Promise.all([
-            listarAlunosOnline(),
-            listarPresencasOnline(),
-            listarPagamentosOnline(),
-          ]);
-          const alunosNormalizados = alunosOnline.map(normalizarAluno);
-          const presencasComAlunos = completarPresencasComAlunos(
-            presencasOnline,
-            alunosNormalizados
-          );
-          const alunosOnlineComDados = aplicarPagamentosNosAlunos(
-            aplicarPresencasNosAlunos(alunosNormalizados, presencasComAlunos),
-            pagamentosOnline
-          );
+          const idAlunoQr = codigoLido.match(
+            /^aluno-([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i
+          )?.[1];
 
-          presencasParaBusca = presencasComAlunos;
-          if (scannerAtivo) {
-            setAlunos(alunosOnlineComDados);
-            setPresencas(presencasComAlunos);
-            setPagamentos(pagamentosOnline);
+          if (idAlunoQr) {
+            const alunoOnline = normalizarAluno(await obterAlunoOnline(idAlunoQr));
+            const agora = new Date();
+            const dataLocalISO = [
+              agora.getFullYear(),
+              String(agora.getMonth() + 1).padStart(2, "0"),
+              String(agora.getDate()).padStart(2, "0"),
+            ].join("-");
+            const [pagamentosDoAluno, possuiPresencaHoje] = await Promise.all([
+              listarPagamentosDoAlunoParaScannerOnline(idAlunoQr),
+              verificarPresencaAlunoNaDataOnline(idAlunoQr, dataLocalISO),
+            ]);
+            const ultimoPagamento = pagamentosDoAluno
+              .sort((a, b) => dataPagamentoParaTempo(b) - dataPagamentoParaTempo(a))[0];
+
+            alunoEncontrado = {
+              ...alunoOnline,
+              statusPagamento: ultimoPagamento?.status || alunoOnline.statusPagamento,
+            };
+            presencaOnlineJaRegistrada = possuiPresencaHoje;
+
+            if (scannerAtivo) {
+              setAlunos((alunosAtuais) =>
+                alunosAtuais.some(
+                  (aluno) => String(aluno.id) === String(alunoEncontrado.id)
+                )
+                  ? alunosAtuais.map((aluno) =>
+                    String(aluno.id) === String(alunoEncontrado.id)
+                      ? { ...aluno, ...alunoEncontrado }
+                      : aluno
+                  )
+                  : [...alunosAtuais, alunoEncontrado]
+              );
+            }
           }
-
-          alunoEncontrado = alunosOnlineComDados.find(
-            (aluno) => `aluno-${aluno.id}` === codigoLido
-          );
         } catch (error) {
           console.error("Erro ao buscar aluno do QR online.", error);
         }
@@ -1171,12 +1210,13 @@ function App() {
 
       const hoje = new Date().toLocaleDateString();
 
-      const jaRegistrou = presencasParaBusca.some(
-        (presenca) =>
-          (String(presenca.alunoId) === String(alunoEncontrado.id) ||
-            presenca.nome === alunoEncontrado.nome) &&
-          presenca.data === hoje
-      );
+      const jaRegistrou = presencaOnlineJaRegistrada ??
+        presencasParaBusca.some(
+          (presenca) =>
+            (String(presenca.alunoId) === String(alunoEncontrado.id) ||
+              presenca.nome === alunoEncontrado.nome) &&
+            presenca.data === hoje
+        );
 
       if (jaRegistrou) {
         alert("Aluno ja registrou presenca hoje.");
@@ -1194,8 +1234,46 @@ function App() {
 
       if (equipeOnlineLogada) {
         try {
-          await registrarPresencaOnline(novaPresenca);
-          await carregarDadosOnlineNoEstado();
+          const presencaConfirmada = await registrarPresencaOnline(novaPresenca);
+          const presencaComAluno = {
+            ...presencaConfirmada,
+            nome: presencaConfirmada.nome || novaPresenca.nome,
+            foto: presencaConfirmada.foto || novaPresenca.foto,
+          };
+
+          setPresencas((presencasAtuais) =>
+            presencasAtuais.some(
+              (presenca) => String(presenca.id) === String(presencaComAluno.id)
+            )
+              ? presencasAtuais
+              : [presencaComAluno, ...presencasAtuais]
+          );
+          setAlunos((alunosAtuais) =>
+            alunosAtuais.map((aluno) => {
+              if (String(aluno.id) !== String(presencaComAluno.alunoId)) {
+                return aluno;
+              }
+
+              const presencaJaIncluida = (aluno.presencas || []).some(
+                (presenca) =>
+                  presenca.data === presencaComAluno.data &&
+                  presenca.hora === presencaComAluno.hora
+              );
+
+              return presencaJaIncluida
+                ? aluno
+                : {
+                  ...aluno,
+                  presencas: [
+                    ...(aluno.presencas || []),
+                    {
+                      data: presencaComAluno.data,
+                      hora: presencaComAluno.hora,
+                    },
+                  ],
+                };
+            })
+          );
         } catch (error) {
           console.error("Erro ao registrar presenca online.", error);
           alert(`Nao foi possivel enviar a presenca ao banco online.\n\nErro: ${error.message}`);
@@ -1275,6 +1353,12 @@ function App() {
     async function sincronizarPainel() {
       try {
         if (!componenteAtivo) return;
+        const sessao = await obterSessaoSupabase();
+
+        if (!sessao?.user?.id) {
+          return;
+        }
+
         await carregarDadosOnlineNoEstado();
       } catch (error) {
         console.error("Erro ao sincronizar painel online.", error);
@@ -1287,24 +1371,168 @@ function App() {
     }
 
     sincronizarPainel();
-    const intervalo = setInterval(sincronizarPainel, 15000);
 
     return () => {
       componenteAtivo = false;
-      clearInterval(intervalo);
     };
   }, [tela, usuarioOnlineLogado, usuarioLogado?.id, usuarioLogado?.academiaId]);
 
   useEffect(() => {
     if (!usuarioOnlineLogado || !supabase) return;
 
+    async function recarregarComSessaoValida() {
+      const sessao = await obterSessaoSupabase();
+
+      if (!sessao?.user?.id) {
+        return;
+      }
+
+      await carregarDadosOnlineNoEstado();
+    }
+
+    async function recarregarAlunosComSessaoValida(payload) {
+      const sessao = await obterSessaoSupabase();
+
+      if (!sessao?.user?.id) {
+        return;
+      }
+
+      if (payload.eventType === "DELETE") {
+        const [alunosOnline, presencasOnline, pagamentosOnline] =
+          await Promise.all([
+            listarAlunosOnline(),
+            listarPresencasOnline(),
+            listarPagamentosOnline(),
+          ]);
+        const alunosNormalizados = alunosOnline.map(normalizarAluno);
+        const presencasComAlunos = completarPresencasComAlunos(
+          presencasOnline,
+          alunosNormalizados
+        );
+        const alunosComPresencas = aplicarPresencasNosAlunos(
+          alunosNormalizados,
+          presencasComAlunos
+        );
+        const alunosComDados = aplicarPagamentosNosAlunos(
+          alunosComPresencas,
+          pagamentosOnline
+        );
+
+        setPresencas(presencasComAlunos);
+        setPagamentos(pagamentosOnline);
+        setAlunos(alunosComDados);
+        return;
+      }
+
+      const alunosOnline = await listarAlunosOnline();
+      const alunosNormalizados = alunosOnline.map(normalizarAluno);
+
+      setAlunos((alunosAtuais) => {
+        const alunosAtuaisPorId = new Map(
+          alunosAtuais.map((aluno) => [String(aluno.id), aluno])
+        );
+
+        return alunosNormalizados.map((alunoOnline) => {
+          const alunoAtual = alunosAtuaisPorId.get(String(alunoOnline.id));
+
+          if (!alunoAtual) {
+            return alunoOnline;
+          }
+
+          return normalizarAluno({
+            ...alunoOnline,
+            presencas: Array.isArray(alunoAtual.presencas)
+              ? alunoAtual.presencas
+              : [],
+            statusPagamento: alunoAtual.statusPagamento,
+            ultimoPagamento: alunoAtual.ultimoPagamento,
+            historicoPagamentos: Array.isArray(
+              alunoAtual.historicoPagamentos
+            )
+              ? alunoAtual.historicoPagamentos
+              : [],
+            comprovantePagamento: alunoAtual.comprovantePagamento,
+            comprovantePagamentoPath: alunoAtual.comprovantePagamentoPath,
+            dataEnvioComprovante: alunoAtual.dataEnvioComprovante,
+          });
+        });
+      });
+    }
+
+    async function recarregarPresencasComSessaoValida() {
+      const sessao = await obterSessaoSupabase();
+
+      if (!sessao?.user?.id) {
+        return;
+      }
+
+      const [alunosOnline, presencasOnline] = await Promise.all([
+        listarAlunosOnline(),
+        listarPresencasOnline(),
+      ]);
+      const alunosNormalizados = alunosOnline.map(normalizarAluno);
+      const presencasComAlunos = completarPresencasComAlunos(
+        presencasOnline,
+        alunosNormalizados
+      );
+
+      setPresencas(presencasComAlunos);
+      setAlunos((alunosAtuais) =>
+        aplicarPresencasNosAlunos(alunosAtuais, presencasComAlunos)
+      );
+    }
+
+    async function recarregarPagamentosComSessaoValida() {
+      const sessao = await obterSessaoSupabase();
+
+      if (!sessao?.user?.id) {
+        return;
+      }
+
+      const [alunosOnline, pagamentosOnline] = await Promise.all([
+        listarAlunosOnline(),
+        listarPagamentosOnline(),
+      ]);
+      const alunosNormalizados = alunosOnline.map(normalizarAluno);
+
+      setPagamentos(pagamentosOnline);
+      setAlunos((alunosAtuais) => {
+        const alunosAtuaisPorId = new Map(
+          alunosAtuais.map((aluno) => [String(aluno.id), aluno])
+        );
+        const alunosBase = alunosNormalizados.map((alunoOnline) => {
+          const alunoAtual = alunosAtuaisPorId.get(String(alunoOnline.id));
+
+          return {
+            ...alunoOnline,
+            presencas: Array.isArray(alunoAtual?.presencas)
+              ? alunoAtual.presencas
+              : [],
+          };
+        });
+
+        return aplicarPagamentosNosAlunos(alunosBase, pagamentosOnline);
+      });
+    }
+
+    async function recarregarAvisosComSessaoValida() {
+      const sessao = await obterSessaoSupabase();
+
+      if (!sessao?.user?.id) {
+        return;
+      }
+
+      const avisosOnline = await listarAvisosOnline();
+      setAvisos(avisosOnline);
+    }
+
     const canal = supabase
       .channel("alunos-sync")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "alunos" },
-        () => {
-          carregarDadosOnlineNoEstado().catch((error) => {
+        (payload) => {
+          recarregarAlunosComSessaoValida(payload).catch((error) => {
             console.error("Erro ao recarregar alunos apos evento realtime.", error);
           });
         }
@@ -1313,7 +1541,7 @@ function App() {
         "postgres_changes",
         { event: "*", schema: "public", table: "presencas" },
         () => {
-          carregarDadosOnlineNoEstado().catch((error) => {
+          recarregarPresencasComSessaoValida().catch((error) => {
             console.error("Erro ao recarregar presencas apos evento realtime.", error);
           });
         }
@@ -1322,7 +1550,7 @@ function App() {
         "postgres_changes",
         { event: "*", schema: "public", table: "pagamentos" },
         () => {
-          carregarDadosOnlineNoEstado().catch((error) => {
+          recarregarPagamentosComSessaoValida().catch((error) => {
             console.error("Erro ao recarregar pagamentos apos evento realtime.", error);
           });
         }
@@ -1331,7 +1559,7 @@ function App() {
         "postgres_changes",
         { event: "*", schema: "public", table: "avisos" },
         () => {
-          carregarDadosOnlineNoEstado().catch((error) => {
+          recarregarAvisosComSessaoValida().catch((error) => {
             console.error("Erro ao recarregar avisos apos evento realtime.", error);
           });
         }
@@ -1517,7 +1745,25 @@ function App() {
           const alunoComFotoOnline = await prepararFotoAlunoOnline(alunoAtualizado);
           const alunoOnline = await salvarAlunoOnline(alunoComFotoOnline);
           alunoAtualizado = normalizarAluno(alunoOnline);
-          await carregarDadosOnlineNoEstado();
+          setAlunos((alunosAtuais) =>
+            alunosAtuais.map((aluno) => {
+              if (String(aluno.id) !== String(alunoAtualizado.id)) {
+                return aluno;
+              }
+
+              return normalizarAluno({
+                ...aluno,
+                ...alunoAtualizado,
+                presencas: aluno.presencas,
+                statusPagamento: aluno.statusPagamento,
+                ultimoPagamento: aluno.ultimoPagamento,
+                historicoPagamentos: aluno.historicoPagamentos,
+                comprovantePagamento: aluno.comprovantePagamento,
+                comprovantePagamentoPath: aluno.comprovantePagamentoPath,
+                dataEnvioComprovante: aluno.dataEnvioComprovante,
+              });
+            })
+          );
         } catch (error) {
           console.error("Erro ao atualizar aluno online.", error);
           alert(`Nao foi possivel atualizar o aluno no banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
@@ -1638,7 +1884,13 @@ function App() {
         const alunoComFotoOnline = await prepararFotoAlunoOnline(novoAluno);
         alunoParaSalvar = normalizarAluno(await salvarAlunoOnline(alunoComFotoOnline));
         await criarAlunoAuthOnline(alunoParaSalvar.id, usuarioNormalizado, senhaNormalizada);
-        await carregarDadosOnlineNoEstado();
+        const alunoConfirmado = normalizarAluno(
+          await obterAlunoOnline(alunoParaSalvar.id)
+        );
+
+        setAlunos((alunosAtuais) =>
+          mesclarAlunosPreservandoLocais(alunosAtuais, [alunoConfirmado])
+        );
       } catch (error) {
         console.error("Erro ao salvar aluno online.", error);
         alert(`Nao foi possivel concluir o cadastro online do aluno.\n\nErro: ${error.message || "erro desconhecido"}`);
@@ -1710,7 +1962,7 @@ function App() {
 
     if (diretorOnlineLogado) {
       try {
-        await Promise.all([
+        const [, pagamentosConfirmados] = await Promise.all([
           salvarAlunoOnline(alunoAtualizado),
           confirmarPagamentoOnline({
             aluno_id: idAluno,
@@ -1720,7 +1972,30 @@ function App() {
             comprovante_path: alunoPago.comprovantePagamentoPath || alunoPago.comprovantePagamento || null,
           }),
         ]);
-        await carregarDadosOnlineNoEstado();
+        setPagamentos((pagamentosAtuais) => {
+          const confirmadosPorId = new Map(
+            pagamentosConfirmados.map((pagamento) => [String(pagamento.id), pagamento])
+          );
+          const idsAtuais = new Set(
+            pagamentosAtuais.map((pagamento) => String(pagamento.id))
+          );
+
+          return [
+            ...pagamentosConfirmados.filter(
+              (pagamento) => !idsAtuais.has(String(pagamento.id))
+            ),
+            ...pagamentosAtuais.map(
+              (pagamento) => confirmadosPorId.get(String(pagamento.id)) || pagamento
+            ),
+          ];
+        });
+        setAlunos((alunosAtuais) =>
+          alunosAtuais.map((aluno) =>
+            String(aluno.id) === String(alunoAtualizado.id)
+              ? alunoAtualizado
+              : aluno
+          )
+        );
       } catch (error) {
         console.error("Erro ao salvar pagamento online.", error);
         alert(`Nao foi possivel confirmar o pagamento no banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
@@ -1769,7 +2044,41 @@ function App() {
           status: "Pendente",
           data_pagamento: null,
         });
-        await carregarDadosOnlineNoEstado();
+        const pagamentosAtualizados = pagamentos.map((pagamento) =>
+          String(pagamento.id) === String(pagamentoPagoMaisRecente.id)
+            ? {
+              ...pagamento,
+              status: "Pendente",
+              data_pagamento: null,
+            }
+            : pagamento
+        );
+        const pagamentosPagosRestantes = pagamentosAtualizados
+          .filter(
+            (pagamento) =>
+              String(pagamento.aluno_id) === String(idAluno) &&
+              pagamento.status === "Pago"
+          )
+          .sort((a, b) => dataPagamentoParaTempo(b) - dataPagamentoParaTempo(a));
+
+        setPagamentos(pagamentosAtualizados);
+        setAlunos((alunosAtuais) =>
+          alunosAtuais.map((aluno) =>
+            String(aluno.id) === String(idAluno)
+              ? {
+                ...aluno,
+                statusPagamento: "Pendente",
+                ultimoPagamento: pagamentosPagosRestantes[0]?.data_pagamento
+                  ? dataISOParaBrasil(pagamentosPagosRestantes[0].data_pagamento)
+                  : "",
+                historicoPagamentos: pagamentosPagosRestantes.map((pagamento) => ({
+                  data: dataISOParaBrasil(pagamento.data_pagamento),
+                  valor: Number(pagamento.valor || 0),
+                })),
+              }
+              : aluno
+          )
+        );
       } catch (error) {
         console.error("Erro ao salvar pendencia online.", error);
         alert(`Nao foi possivel marcar o pagamento como pendente no banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
@@ -1829,21 +2138,39 @@ function App() {
 
       try {
         const alunoComFotoOnline = await prepararFotoAlunoOnline(alunoAtualizado);
-        await atualizarPerfilAlunoOnline(alunoPerfil.id, {
-          telefone,
-          responsavel,
-          tipo_sanguineo: tipoSanguineo,
-          saude,
-          medicamentos,
-          observacoes,
-          foto_url: alunoComFotoOnline.fotoUrl || alunoComFotoOnline.foto || null,
-        });
+        const alunoConfirmado = normalizarAluno(
+          await atualizarPerfilAlunoOnline(alunoPerfil.id, {
+            telefone,
+            responsavel,
+            tipo_sanguineo: tipoSanguineo,
+            saude,
+            medicamentos,
+            observacoes,
+            foto_url: alunoComFotoOnline.fotoUrl || alunoComFotoOnline.foto || null,
+          })
+        );
 
         if (novaSenha && usuarioLogado?.origem === "supabase") {
           await atualizarSenhaUsuarioAtual(novaSenha);
         }
 
-        await carregarDadosOnlineNoEstado();
+        setAlunos((alunosAtuais) =>
+          alunosAtuais.map((aluno) =>
+            String(aluno.id) === String(alunoPerfil.id)
+              ? normalizarAluno({
+                ...aluno,
+                ...alunoConfirmado,
+                presencas: aluno.presencas,
+                statusPagamento: aluno.statusPagamento,
+                ultimoPagamento: aluno.ultimoPagamento,
+                historicoPagamentos: aluno.historicoPagamentos,
+                comprovantePagamento: aluno.comprovantePagamento,
+                comprovantePagamentoPath: aluno.comprovantePagamentoPath,
+                dataEnvioComprovante: aluno.dataEnvioComprovante,
+              })
+              : aluno
+          )
+        );
       } catch (error) {
         console.error("Erro ao atualizar cadastro do aluno online.", error);
         alert(`Nao foi possivel salvar seu cadastro no banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
@@ -1975,14 +2302,37 @@ function App() {
 
     if (idAlunoOnlineValido(idAluno)) {
       try {
-        await salvarPagamentoOnline({
+        const pagamentoSalvo = await salvarPagamentoOnline({
           aluno_id: idAluno,
           valor: Number(alunoAtualizado.mensalidade || 0),
           status: "Aguardando",
           data_pagamento: new Date().toISOString().slice(0, 10),
           comprovante_url: comprovanteParaSalvar,
         });
-        await carregarDadosOnlineNoEstado();
+        setPagamentos((pagamentosAtuais) =>
+          pagamentosAtuais.some(
+            (pagamento) => String(pagamento.id) === String(pagamentoSalvo.id)
+          )
+            ? pagamentosAtuais.map((pagamento) =>
+              String(pagamento.id) === String(pagamentoSalvo.id)
+                ? pagamentoSalvo
+                : pagamento
+            )
+            : [pagamentoSalvo, ...pagamentosAtuais]
+        );
+        setAlunos((alunosAtuais) =>
+          alunosAtuais.map((aluno) =>
+            String(aluno.id) === String(idAluno)
+              ? {
+                ...aluno,
+                statusPagamento: alunoAtualizado.statusPagamento,
+                comprovantePagamento: pagamentoSalvo.comprovante_url,
+                comprovantePagamentoPath: pagamentoSalvo.comprovante_path,
+                dataEnvioComprovante: alunoAtualizado.dataEnvioComprovante,
+              }
+              : aluno
+          )
+        );
       } catch (error) {
         console.error("Erro ao enviar pagamento online.", error);
         alert(`Nao foi possivel enviar o pagamento ao banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
@@ -2034,7 +2384,29 @@ function App() {
         await atualizarPagamentoOnlinePorId(pagamentoAguardandoMaisRecente.id, {
           status: "Rejeitado",
         });
-        await carregarDadosOnlineNoEstado();
+        setPagamentos((pagamentosAtuais) =>
+          pagamentosAtuais.map((pagamento) =>
+            String(pagamento.id) === String(pagamentoAguardandoMaisRecente.id)
+              ? {
+                ...pagamento,
+                status: "Rejeitado",
+              }
+              : pagamento
+          )
+        );
+        setAlunos((alunosAtuais) =>
+          alunosAtuais.map((aluno) =>
+            String(aluno.id) === String(idAluno)
+              ? {
+                ...aluno,
+                statusPagamento: "Pendente",
+                comprovantePagamento: null,
+                comprovantePagamentoPath: null,
+                dataEnvioComprovante: "",
+              }
+              : aluno
+          )
+        );
       } catch (error) {
         console.error("Erro ao rejeitar pagamento online.", error);
         alert(`Nao foi possivel rejeitar o pagamento no banco online.\n\nErro: ${error.message || "erro desconhecido"}`);
@@ -2354,8 +2726,46 @@ function App() {
 
       if (equipeOnlineLogada) {
         try {
-          await registrarPresencaOnline(novaPresenca);
-          await carregarDadosOnlineNoEstado();
+          const presencaConfirmada = await registrarPresencaOnline(novaPresenca);
+          const presencaComAluno = {
+            ...presencaConfirmada,
+            nome: presencaConfirmada.nome || novaPresenca.nome,
+            foto: presencaConfirmada.foto || novaPresenca.foto,
+          };
+
+          setPresencas((presencasAtuais) =>
+            presencasAtuais.some(
+              (presenca) => String(presenca.id) === String(presencaComAluno.id)
+            )
+              ? presencasAtuais
+              : [presencaComAluno, ...presencasAtuais]
+          );
+          setAlunos((alunosAtuais) =>
+            alunosAtuais.map((aluno) => {
+              if (String(aluno.id) !== String(presencaComAluno.alunoId)) {
+                return aluno;
+              }
+
+              const presencaJaIncluida = (aluno.presencas || []).some(
+                (presenca) =>
+                  presenca.data === presencaComAluno.data &&
+                  presenca.hora === presencaComAluno.hora
+              );
+
+              return presencaJaIncluida
+                ? aluno
+                : {
+                  ...aluno,
+                  presencas: [
+                    ...(aluno.presencas || []),
+                    {
+                      data: presencaComAluno.data,
+                      hora: presencaComAluno.hora,
+                    },
+                  ],
+                };
+            })
+          );
         } catch (error) {
           console.error("Erro ao registrar presença online.", error);
           alert(`Não foi possível enviar a presença ao banco online.\n\nErro: ${error.message}`);
@@ -2398,12 +2808,30 @@ function App() {
 
       try {
         removerAlunoDosCachesLocais(alunoRemovido);
-        await carregarDadosOnlineNoEstado();
+        setAlunos((alunosAtuais) =>
+          alunosAtuais.filter((aluno) => String(aluno.id) !== String(idAluno))
+        );
+        setPresencas((presencasAtuais) =>
+          presencasAtuais.filter(
+            (presenca) =>
+              String(presenca.alunoId) !== String(idAluno) &&
+              (!alunoRemovido || presenca.nome !== alunoRemovido.nome)
+          )
+        );
+        setPagamentos((pagamentosAtuais) =>
+          pagamentosAtuais.filter(
+            (pagamento) => String(pagamento.aluno_id) !== String(idAluno)
+          )
+        );
+        setUsuarios((usuariosAtuais) =>
+          usuariosAtuais.filter(
+            (usuario) => String(usuario.alunoId) !== String(idAluno)
+          )
+        );
       } catch (error) {
-        console.error("Erro ao recarregar dados apos exclusao online.", error);
+        console.error("Erro ao atualizar dados locais apos exclusao online.", error);
       }
 
-      setUsuarios((prev) => prev.filter((usuario) => usuario.alunoId !== idAluno));
       alert("Aluno removido com sucesso.");
       return;
     }
@@ -2482,8 +2910,20 @@ function App() {
     }
 
     try {
-      await criarAlunoAuthOnline(aluno.id, email, "123456");
-      await carregarDadosOnlineNoEstado();
+      const resultadoAuth = await criarAlunoAuthOnline(aluno.id, email, "123456");
+      const authUserId = resultadoAuth.auth_user_id;
+
+      setAlunos((alunosAtuais) =>
+        alunosAtuais.map((alunoAtual) =>
+          String(alunoAtual.id) === String(aluno.id)
+            ? {
+              ...alunoAtual,
+              authUserId,
+              auth_user_id: authUserId,
+            }
+            : alunoAtual
+        )
+      );
       alert(`Acesso ao Portal ativado.\n\nE-mail: ${email}\nSenha inicial: 123456`);
     } catch (error) {
       console.error("Erro ao ativar acesso do aluno no Supabase Auth.", error);
@@ -2519,7 +2959,6 @@ function App() {
 
     try {
       await atualizarEmailAlunoAuthOnline(aluno.id, email);
-      await carregarDadosOnlineNoEstado();
       alert(`E-mail do Portal atualizado com sucesso.\n\nNovo e-mail: ${email}`);
     } catch (error) {
       console.error("Erro ao corrigir e-mail do aluno no Supabase Auth.", error);
@@ -2611,12 +3050,12 @@ function App() {
     if (!supabaseConfigurado) return;
 
     limitarTempo(
-      buscarUsuarioSistemaOnline(usuarioDigitado),
+      buscarUsuarioSistemaOnline(usuarioDigitado, senhaDigitada),
       2500,
       "Consulta online demorou demais."
     )
       .then((usuarioOnlineSistema) => {
-        if (usuarioOnlineSistema?.senha?.trim() !== senhaDigitada) return;
+        if (!usuarioOnlineSistema) return;
 
         setUsuarios((usuariosAtuais) => {
           const jaExiste = usuariosAtuais.some(
@@ -2652,6 +3091,7 @@ function App() {
     }
 
     setLoginEmAndamento(true);
+    setSessaoSupabasePronta(false);
 
     const usuarioLocal = usuarios.find(
       (u) =>
@@ -2669,12 +3109,12 @@ function App() {
     if (supabaseConfigurado && !usuarioDigitado.includes("@")) {
       try {
         const usuarioOnlineSistema = await limitarTempo(
-          buscarUsuarioSistemaOnline(usuarioDigitado),
+          buscarUsuarioSistemaOnline(usuarioDigitado, senhaDigitada),
           1500,
           "Consulta online demorou demais."
         );
 
-        if (usuarioOnlineSistema?.senha?.trim() === senhaDigitada) {
+        if (usuarioOnlineSistema) {
           setUsuarios((usuariosAtuais) => {
             const jaExiste = usuariosAtuais.some(
               (usuarioAtual) =>
@@ -2686,6 +3126,9 @@ function App() {
           });
 
           entrarUsuarioLocal(usuarioOnlineSistema);
+          setErroArmazenamento(
+            "Este acesso usa usuario interno e nao abriu uma sessao Supabase Auth. Para carregar dados online protegidos, entre com o e-mail do Supabase."
+          );
           setLoginEmAndamento(false);
           return;
         }
@@ -2702,8 +3145,9 @@ function App() {
           "Login online demorou demais."
         );
 
+        const userIdLogin = loginOnline?.user?.id || loginOnline?.session?.user?.id;
         const perfil = await limitarTempo(
-          obterPerfilSupabase(),
+          obterPerfilSupabase(userIdLogin),
           15000,
           "Perfil online demorou demais."
         );
@@ -2717,6 +3161,7 @@ function App() {
           return;
         }
 
+        setSessaoSupabasePronta(true);
         const usuarioOnline = {
           id: perfil.id || loginOnline?.user?.id || usuarioDigitado,
           usuario: usuarioDigitado,
@@ -2784,7 +3229,6 @@ function App() {
     setMostrarDadosPortalAluno(false);
     setMenuAberto(false);
     localStorage.removeItem(STORAGE_KEYS.usuarioLogado);
-    localStorage.removeItem("usuario_logado_ariramba");
   }
 
   async function enviarAlunosParaBancoOnline() {
@@ -3044,32 +3488,22 @@ function App() {
 
     async function carregarAlunoCompletoDoPortal() {
       try {
-        let usuarioAtual = usuarioLogado;
+        const usuarioAtual = usuarioLogado;
 
         if (
           usuarioAtual?.origem === "usuarios_sistema" &&
-          (!usuarioAtual.alunoId || !idAlunoOnlineValido(usuarioAtual.alunoId)) &&
-          usuarioAtual.usuario
+          (!usuarioAtual.alunoId || !idAlunoOnlineValido(usuarioAtual.alunoId))
         ) {
-          const usuarioOnlineSistema = await buscarUsuarioSistemaOnline(usuarioAtual.usuario);
+          if (!ativo) return;
 
-          if (usuarioOnlineSistema) {
-            usuarioAtual = usuarioOnlineSistema;
-
-            if (ativo) {
-              setUsuarioLogado(usuarioOnlineSistema);
-              setTipoUsuario(usuarioOnlineSistema.cargo);
-              setUsuarios((usuariosAtuais) => {
-                const usuariosSemDuplicar = usuariosAtuais.filter(
-                  (usuarioExistente) =>
-                    normalizarTextoChave(usuarioExistente.usuario) !==
-                    normalizarTextoChave(usuarioOnlineSistema.usuario)
-                );
-
-                return [...usuariosSemDuplicar, usuarioOnlineSistema];
-              });
-            }
-          }
+          localStorage.removeItem(STORAGE_KEYS.usuarioLogado);
+          setUsuarioLogado(null);
+          setTipoUsuario("");
+          setTela("inicio");
+          setErroArmazenamento(
+            "Sua sessao interna precisa ser validada novamente. Entre com usuario e senha."
+          );
+          return;
         }
 
         const alunoOnline = usuarioAtual?.alunoId && idAlunoOnlineValido(usuarioAtual.alunoId)
