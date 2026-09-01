@@ -120,6 +120,10 @@ as $$
 $$;
 
 alter table public.academias enable row level security;
+revoke all privileges on table public.alunos from anon;
+revoke all privileges on table public.presencas from anon;
+revoke all privileges on table public.pagamentos from anon;
+revoke all privileges on table public.usuarios_sistema from anon;
 
 drop policy if exists "Equipe gerencia alunos" on public.alunos;
 drop policy if exists "Aluno ve proprio cadastro" on public.alunos;

@@ -171,25 +171,6 @@ using (
   )
 );
 
-create policy "Site publicado acessa alunos"
-on public.alunos
-for select
-to anon
-using (true);
-
-create policy "Site publicado cadastra alunos"
-on public.alunos
-for insert
-to anon
-with check (true);
-
-create policy "Site publicado atualiza alunos"
-on public.alunos
-for update
-to anon
-using (true)
-with check (true);
-
 create policy "Equipe gerencia presencas"
 on public.presencas
 for all
@@ -209,31 +190,6 @@ using (
       and profiles.aluno_id = presencas.aluno_id
   )
 );
-
-create policy "Site publicado consulta presencas"
-on public.presencas
-for select
-to anon
-using (true);
-
-create policy "Site publicado registra presencas"
-on public.presencas
-for insert
-to anon
-with check (true);
-
-create policy "Site publicado atualiza presencas"
-on public.presencas
-for update
-to anon
-using (true)
-with check (true);
-
-create policy "Site publicado remove presencas"
-on public.presencas
-for delete
-to anon
-using (true);
 
 create policy "Diretor gerencia pagamentos"
 on public.pagamentos
@@ -268,25 +224,6 @@ with check (
   )
 );
 
-create policy "Site publicado consulta pagamentos"
-on public.pagamentos
-for select
-to anon
-using (true);
-
-create policy "Site publicado envia pagamentos"
-on public.pagamentos
-for insert
-to anon
-with check (true);
-
-create policy "Site publicado atualiza pagamentos"
-on public.pagamentos
-for update
-to anon
-using (true)
-with check (true);
-
 create policy "Usuario ve proprio profile"
 on public.profiles
 for select
@@ -311,31 +248,6 @@ on public.avisos
 for insert
 to authenticated
 with check (public.usuario_equipe());
-
-create policy "Site publicado consulta usuarios"
-on public.usuarios_sistema
-for select
-to anon
-using (true);
-
-create policy "Site publicado cadastra usuarios"
-on public.usuarios_sistema
-for insert
-to anon
-with check (true);
-
-create policy "Site publicado atualiza usuarios"
-on public.usuarios_sistema
-for update
-to anon
-using (true)
-with check (true);
-
-create policy "Site publicado remove usuarios"
-on public.usuarios_sistema
-for delete
-to anon
-using (true);
 
 insert into storage.buckets (id, name, public)
 values

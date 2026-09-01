@@ -20,43 +20,11 @@ for each row execute function public.atualizar_coluna_atualizado_em();
 alter table public.usuarios_sistema enable row level security;
 
 grant usage on schema public to anon, authenticated;
-grant select, insert, update, delete on public.usuarios_sistema to anon, authenticated;
-grant select, insert, update on public.alunos to anon, authenticated;
+grant select, insert, update, delete on public.usuarios_sistema to authenticated;
+grant select, insert, update on public.alunos to authenticated;
 
 drop policy if exists "Site publicado acessa alunos" on public.alunos;
-create policy "Site publicado acessa alunos"
-on public.alunos
-for select
-to anon
-using (true);
-
 drop policy if exists "Site publicado cadastra alunos" on public.alunos;
-create policy "Site publicado cadastra alunos"
-on public.alunos
-for insert
-to anon
-with check (true);
-
 drop policy if exists "Site publicado atualiza alunos" on public.alunos;
-create policy "Site publicado atualiza alunos"
-on public.alunos
-for update
-to anon
-using (true)
-with check (true);
-
 drop policy if exists "Site publicado gerencia usuarios anon" on public.usuarios_sistema;
-create policy "Site publicado gerencia usuarios anon"
-on public.usuarios_sistema
-for all
-to anon
-using (true)
-with check (true);
-
 drop policy if exists "Site publicado gerencia usuarios autenticado" on public.usuarios_sistema;
-create policy "Site publicado gerencia usuarios autenticado"
-on public.usuarios_sistema
-for all
-to authenticated
-using (true)
-with check (true);

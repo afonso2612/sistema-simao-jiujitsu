@@ -8,16 +8,40 @@ Este projeto usa o Supabase como banco online e fonte principal dos dados quando
 2. Crie ou abra o projeto.
 3. Abra `SQL Editor`.
 4. Execute `supabase/schema.sql`.
-5. Execute `supabase/2026-08-10-fonte-unica-alunos.sql`, se ainda nao foi aplicado.
-6. Em `Project Settings > API`, copie:
+5. Execute obrigatoriamente `supabase/2026-08-10-fonte-unica-alunos.sql`.
+6. Depois, aplique somente scripts posteriores que sejam realmente necessarios.
+7. Em `Project Settings > API`, copie:
    - Project URL
    - anon public key ou publishable key
-7. Crie `.env.local` na raiz do projeto:
+8. Crie `.env.local` na raiz do projeto:
 
 ```env
 VITE_SUPABASE_URL=https://seu-projeto.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sua-chave-publica
 ```
+
+Em uma instalacao nova, `supabase/schema.sql` e
+`supabase/2026-08-10-fonte-unica-alunos.sql` formam uma sequencia obrigatoria e
+devem ser executados nessa ordem.
+
+## Scripts legados e estado de seguranca
+
+Os arquivos abaixo sao legados/auxiliares e nao devem ser executados como
+etapas adicionais depois da migracao canonica
+`supabase/2026-08-10-fonte-unica-alunos.sql`:
+
+- `supabase/usuarios-sistema.sql`
+- `supabase/pagamentos-portal.sql`
+- `supabase/presencas-portal.sql`
+
+O estado final esperado nao concede a `anon` acesso direto de tabela a
+`public.alunos`, `public.presencas`, `public.pagamentos` ou
+`public.usuarios_sistema`.
+
+A RPC segura `public.verificar_usuario_sistema(text, text)` e uma excecao
+intencional: `anon` pode possuir `EXECUTE` nessa funcao `SECURITY DEFINER`. Esse
+privilegio permite apenas chamar a RPC e nao concede acesso direto de `anon` a
+tabela `public.usuarios_sistema`.
 
 ## Criar o diretor principal
 
