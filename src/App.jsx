@@ -721,6 +721,88 @@ function emailValido(valor) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(valor || "").trim());
 }
 
+// Mant?m a logo montada durante as atualiza??es do rel?gio em App.
+function Menu({ setTela, tipoUsuario, setMenuAberto, limparFormulario, sairDoSistema }) {
+
+  function navegar(telaDestino) {
+    setTela(telaDestino);
+    setMenuAberto(false);
+  }
+
+  return (
+    <aside className="menuLateral">
+
+      <img src={logo} alt={`Logo ${APP_NAME}`} />
+
+      <h2>SIMÃO TEAM</h2>
+
+      <p>JIU-JITSU</p>
+
+      {tipoUsuario !== "aluno" && (
+        <button onClick={() => navegar("dashboard")}>
+          Painel Inicial
+        </button>
+      )}
+
+      {tipoUsuario === "diretor" && (
+        <button
+          onClick={() => {
+            limparFormulario();
+            navegar("cadastro");
+          }}
+        >
+          Cadastrar Aluno
+        </button>
+      )}
+
+      {tipoUsuario === "diretor" && (
+        <button onClick={() => navegar("cadastroProfessor")}>
+          Cadastrar Professor
+        </button>
+      )}
+
+      {tipoUsuario !== "aluno" && (
+        <button onClick={() => navegar("lista")}>
+          Lista de Alunos
+        </button>
+      )}
+
+      {tipoUsuario !== "aluno" && (
+        <button onClick={() => navegar("scanner")}>
+          Escanear QR Code
+        </button>
+      )}
+
+      {tipoUsuario !== "aluno" && (
+        <button onClick={() => navegar("historico")}>
+          Histórico de Presenças
+        </button>
+      )}
+
+      {tipoUsuario === "diretor" && (
+        <>
+          <button onClick={() => navegar("mensalidades")}>
+            Mensalidades
+          </button>
+
+          <button onClick={() => navegar("pagamentos")}>
+            Pagamentos
+          </button>
+
+          <button onClick={() => navegar("relatorios")}>
+            Relatórios
+          </button>
+        </>
+      )}
+
+      <button onClick={sairDoSistema}>
+        Sair
+      </button>
+
+    </aside>
+  );
+}
+
 function App() {
   const [tela, setTela] = useState("inicio");
 
@@ -3827,6 +3909,8 @@ function App() {
       <div className="layoutSistema">
         {menuAberto && (
           <Menu
+            limparFormulario={limparFormulario}
+            sairDoSistema={sairDoSistema}
             setTela={setTela}
             tipoUsuario={tipoUsuario}
             setMenuAberto={setMenuAberto}
@@ -3899,6 +3983,8 @@ function App() {
       <div className="layoutSistema">
         {menuAberto && (
           <Menu
+            limparFormulario={limparFormulario}
+            sairDoSistema={sairDoSistema}
             setTela={setTela}
             tipoUsuario={tipoUsuario}
             setMenuAberto={setMenuAberto}
@@ -4071,6 +4157,8 @@ function App() {
       <div className="layoutSistema">
         {menuAberto && (
           <Menu
+            limparFormulario={limparFormulario}
+            sairDoSistema={sairDoSistema}
             setTela={setTela}
             tipoUsuario={tipoUsuario}
             setMenuAberto={setMenuAberto}
@@ -4347,6 +4435,8 @@ function App() {
       <div className="layoutSistema">
         {menuAberto && (
           <Menu
+            limparFormulario={limparFormulario}
+            sairDoSistema={sairDoSistema}
             setTela={setTela}
             tipoUsuario={tipoUsuario}
             setMenuAberto={setMenuAberto}
@@ -4444,6 +4534,8 @@ function App() {
             ></div>
 
             <Menu
+              limparFormulario={limparFormulario}
+              sairDoSistema={sairDoSistema}
               setTela={setTela}
               tipoUsuario={tipoUsuario}
               setMenuAberto={setMenuAberto}
@@ -4636,6 +4728,8 @@ function App() {
             ></div>
 
             <Menu
+              limparFormulario={limparFormulario}
+              sairDoSistema={sairDoSistema}
               setTela={setTela}
               tipoUsuario={tipoUsuario}
               setMenuAberto={setMenuAberto}
@@ -4719,6 +4813,8 @@ function App() {
       <div className="layoutSistema">
         {menuAberto && (
           <Menu
+            limparFormulario={limparFormulario}
+            sairDoSistema={sairDoSistema}
             setTela={setTela}
             tipoUsuario={tipoUsuario}
             setMenuAberto={setMenuAberto}
@@ -4802,6 +4898,8 @@ function App() {
             ></div>
 
             <Menu
+              limparFormulario={limparFormulario}
+              sairDoSistema={sairDoSistema}
               setTela={setTela}
               tipoUsuario={tipoUsuario}
               setMenuAberto={setMenuAberto}
@@ -4973,6 +5071,8 @@ function App() {
             ></div>
 
             <Menu
+              limparFormulario={limparFormulario}
+              sairDoSistema={sairDoSistema}
               setTela={setTela}
               tipoUsuario={tipoUsuario}
               setMenuAberto={setMenuAberto}
@@ -5355,6 +5455,8 @@ function App() {
       <div className="layoutSistema">
         {menuAberto && (
           <Menu
+            limparFormulario={limparFormulario}
+            sairDoSistema={sairDoSistema}
             setTela={setTela}
             tipoUsuario={tipoUsuario}
             setMenuAberto={setMenuAberto}
@@ -5390,6 +5492,8 @@ function App() {
     <div className="layoutSistema">
       <div className="menuDesktop">
         <Menu
+          limparFormulario={limparFormulario}
+          sairDoSistema={sairDoSistema}
           setTela={setTela}
           tipoUsuario={tipoUsuario}
           setMenuAberto={setMenuAberto}
@@ -5407,6 +5511,8 @@ function App() {
           ></div>
 
           <Menu
+            limparFormulario={limparFormulario}
+            sairDoSistema={sairDoSistema}
             setTela={setTela}
             tipoUsuario={tipoUsuario}
             setMenuAberto={setMenuAberto}
@@ -5733,86 +5839,6 @@ function App() {
     return <h3>{children}</h3>;
   }
 
-  function Menu({ setTela, tipoUsuario, setMenuAberto }) {
-
-    function navegar(telaDestino) {
-      setTela(telaDestino);
-      setMenuAberto(false);
-    }
-
-    return (
-      <aside className="menuLateral">
-
-        <img src={logo} alt={`Logo ${APP_NAME}`} />
-
-        <h2>SIMÃO TEAM</h2>
-
-        <p>JIU-JITSU</p>
-
-        {tipoUsuario !== "aluno" && (
-          <button onClick={() => navegar("dashboard")}>
-            Painel Inicial
-          </button>
-        )}
-
-        {tipoUsuario === "diretor" && (
-          <button
-            onClick={() => {
-              limparFormulario();
-              navegar("cadastro");
-            }}
-          >
-            Cadastrar Aluno
-          </button>
-        )}
-
-        {tipoUsuario === "diretor" && (
-          <button onClick={() => navegar("cadastroProfessor")}>
-            Cadastrar Professor
-          </button>
-        )}
-
-        {tipoUsuario !== "aluno" && (
-          <button onClick={() => navegar("lista")}>
-            Lista de Alunos
-          </button>
-        )}
-
-        {tipoUsuario !== "aluno" && (
-          <button onClick={() => navegar("scanner")}>
-            Escanear QR Code
-          </button>
-        )}
-
-        {tipoUsuario !== "aluno" && (
-          <button onClick={() => navegar("historico")}>
-            Histórico de Presenças
-          </button>
-        )}
-
-        {tipoUsuario === "diretor" && (
-          <>
-            <button onClick={() => navegar("mensalidades")}>
-              Mensalidades
-            </button>
-
-            <button onClick={() => navegar("pagamentos")}>
-              Pagamentos
-            </button>
-
-            <button onClick={() => navegar("relatorios")}>
-              Relatórios
-            </button>
-          </>
-        )}
-
-        <button onClick={sairDoSistema}>
-          Sair
-        </button>
-
-      </aside>
-    );
-  }
 
 }
 
