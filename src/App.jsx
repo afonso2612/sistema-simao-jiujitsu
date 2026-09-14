@@ -3672,6 +3672,19 @@ function App() {
 
   const avisosDoPainel = [...avisosPagamentoAguardando, ...avisos];
 
+  const historicoFinanceiroGeral = pagamentos
+    .map((pagamento) => {
+      const aluno = alunos.find(
+        (item) => String(item.id) === String(pagamento.aluno_id)
+      );
+
+      return {
+        ...pagamento,
+        nomeAluno: aluno?.nome || "Aluno não encontrado",
+      };
+    })
+    .sort((a, b) => dataPagamentoParaTempo(b) - dataPagamentoParaTempo(a));
+
   const totalArrecadado = alunos.reduce((total, aluno) => {
     return total + aluno.historicoPagamentos.reduce((soma, pagamento) => {
       return soma + pagamento.valor;
@@ -4578,6 +4591,27 @@ function App() {
 
               </CardAluno>
             ))}
+          </div>
+
+          <div className="historicoPagamentos">
+            <h2>Histórico Financeiro Geral</h2>
+
+            {historicoFinanceiroGeral.length > 0 ? (
+              historicoFinanceiroGeral.map((pagamento) => (
+                <div className="cardAluno" key={pagamento.id}>
+                  <h3>{pagamento.nomeAluno}</h3>
+                  <p>
+                    Data: {dataISOParaBrasil(
+                      pagamento.data_pagamento || pagamento.criado_em
+                    ) || "Não informada"}
+                  </p>
+                  <p>Valor: {formatarMoeda(pagamento.valor)}</p>
+                  <p>Status: {pagamento.status || "Pendente"}</p>
+                </div>
+              ))
+            ) : (
+              <p>Nenhum pagamento registrado.</p>
+            )}
           </div>
 
           <button onClick={() => setTela("dashboard")}>
