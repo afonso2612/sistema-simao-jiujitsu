@@ -550,8 +550,34 @@ export async function atualizarPagamentoOnlinePorId(id, campos) {
   return data;
 }
 
+export async function atualizarStatusFinanceiroAlunoOnline(
+  idAluno,
+  statusPagamento,
+  ultimoPagamento = null
+) {
+  exigirSupabase();
+
+  const { error } = await supabase
+    .from("alunos")
+    .update({
+      status_pagamento: statusPagamento,
+      ultimo_pagamento: ultimoPagamento,
+    })
+    .eq("id", idAluno);
+
+  if (error) throw error;
+}
 export async function confirmarPagamentoOnline(pagamento) {
   exigirSupabase();
+
+  if (!pagamento.id) {
+    return [
+      await salvarPagamentoOnline({
+        ...pagamento,
+        status: "Pago",
+      }),
+    ];
+  }
 
   const linha = {
     valor: pagamento.valor,
@@ -560,27 +586,17 @@ export async function confirmarPagamentoOnline(pagamento) {
     comprovante_url: pagamento.comprovante_path || pagamento.comprovante_url || null,
   };
 
-  const { data: atualizados, error: erroAtualizar } = await supabase
+  const { data, error } = await supabase
     .from("pagamentos")
     .update(linha)
-    .eq("aluno_id", pagamento.aluno_id)
-    .in("status", ["Aguardando", "Pendente"])
-    .select();
+    .eq("id", pagamento.id)
+    .select()
+    .single();
 
-  if (erroAtualizar) throw erroAtualizar;
+  if (error) throw error;
 
-  if (atualizados && atualizados.length > 0) {
-    return Promise.all(atualizados.map(pagamentoVisualizavel));
-  }
-
-  return [
-    await salvarPagamentoOnline({
-      ...pagamento,
-      status: "Pago",
-    }),
-  ];
+  return [await pagamentoVisualizavel(data)];
 }
-
 export async function enviarArquivoOnline(bucket, caminho, arquivo) {
   exigirSupabase();
 

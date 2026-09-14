@@ -11,6 +11,7 @@ import {
   atualizarPerfilAlunoOnline,
   atualizarEmailAlunoAuthOnline,
   atualizarPagamentoOnlinePorId,
+  atualizarStatusFinanceiroAlunoOnline,
   buscarUsuarioSistemaOnline,
   confirmarPagamentoOnline,
   criarAlunoAuthOnline,
@@ -561,10 +562,14 @@ function aplicarPagamentosNosAlunos(alunos, pagamentos) {
       ? ultimoPagamento
       : null;
     const ultimoPago = pagos[0];
+    const statusPagamentoAtual =
+      ultimoPagamento?.status === "Rejeitado"
+        ? "Pendente"
+        : ultimoPagamento?.status || aluno.statusPagamento;
 
     return {
       ...aluno,
-      statusPagamento: ultimoPagamento?.status || aluno.statusPagamento,
+      statusPagamento: statusPagamentoAtual,
       comprovantePagamento:
         aguardando?.comprovante_url ||
         comprovanteAtual?.comprovante_url ||
@@ -879,6 +884,12 @@ function App() {
     return recuperarDadosSalvos(CHAVES_PRESENCAS_LOCAIS, []);
   });
   const [pagamentos, setPagamentos] = useState([]);
+  const pagamentosRef = useRef(pagamentos);
+
+  useEffect(() => {
+    pagamentosRef.current = pagamentos;
+  }, [pagamentos]);
+
 
   async function carregarDadosOnlineNoEstado() {
     const [alunosOnline, presencasOnline, pagamentosOnline, avisosOnline] = await Promise.all([
@@ -1961,6 +1972,14 @@ function App() {
 
     const alunoPago = alunos.find((aluno) => aluno.id === idAluno);
     const alunoAtualizado = novosAlunos.find((aluno) => aluno.id === idAluno);
+    const ultimoPagamento = obterUltimoPagamentoDoAluno(
+      pagamentosRef.current,
+      idAluno
+    );
+    const pagamentoAguardando =
+      ultimoPagamento?.status === "Aguardando"
+        ? ultimoPagamento
+        : null;
 
     if (!alunoPago || !alunoAtualizado) return;
 
@@ -1969,6 +1988,7 @@ function App() {
         const [, pagamentosConfirmados] = await Promise.all([
           salvarAlunoOnline(alunoAtualizado),
           confirmarPagamentoOnline({
+            id: pagamentoAguardando?.id,
             aluno_id: idAluno,
             valor: calcularValorComJuros(alunoPago),
             status: "Pago",
@@ -2065,6 +2085,13 @@ function App() {
           )
           .sort((a, b) => dataPagamentoParaTempo(b) - dataPagamentoParaTempo(a));
 
+        await atualizarStatusFinanceiroAlunoOnline(
+          idAluno,
+          "Pendente",
+          pagamentosPagosRestantes[0]?.data_pagamento || null
+        );
+
+        pagamentosRef.current = pagamentosAtualizados;
         setPagamentos(pagamentosAtualizados);
         setAlunos((alunosAtuais) =>
           alunosAtuais.map((aluno) =>
@@ -2313,8 +2340,8 @@ function App() {
           data_pagamento: new Date().toISOString().slice(0, 10),
           comprovante_url: comprovanteParaSalvar,
         });
-        setPagamentos((pagamentosAtuais) =>
-          pagamentosAtuais.some(
+        setPagamentos((pagamentosAtuais) => {
+          const pagamentosAtualizados = pagamentosAtuais.some(
             (pagamento) => String(pagamento.id) === String(pagamentoSalvo.id)
           )
             ? pagamentosAtuais.map((pagamento) =>
@@ -2322,8 +2349,11 @@ function App() {
                 ? pagamentoSalvo
                 : pagamento
             )
-            : [pagamentoSalvo, ...pagamentosAtuais]
-        );
+            : [pagamentoSalvo, ...pagamentosAtuais];
+
+          pagamentosRef.current = pagamentosAtualizados;
+          return pagamentosAtualizados;
+        });
         setAlunos((alunosAtuais) =>
           alunosAtuais.map((aluno) =>
             String(aluno.id) === String(idAluno)
@@ -2388,16 +2418,25 @@ function App() {
         await atualizarPagamentoOnlinePorId(pagamentoAguardandoMaisRecente.id, {
           status: "Rejeitado",
         });
-        setPagamentos((pagamentosAtuais) =>
-          pagamentosAtuais.map((pagamento) =>
+
+        await atualizarStatusFinanceiroAlunoOnline(
+          idAluno,
+          "Pendente",
+          null
+        );
+        setPagamentos((pagamentosAtuais) => {
+          const pagamentosAtualizados = pagamentosAtuais.map((pagamento) =>
             String(pagamento.id) === String(pagamentoAguardandoMaisRecente.id)
               ? {
                 ...pagamento,
                 status: "Rejeitado",
               }
               : pagamento
-          )
-        );
+          );
+
+          pagamentosRef.current = pagamentosAtualizados;
+          return pagamentosAtualizados;
+        });
         setAlunos((alunosAtuais) =>
           alunosAtuais.map((aluno) =>
             String(aluno.id) === String(idAluno)
