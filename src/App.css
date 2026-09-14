@@ -166,6 +166,7 @@ button:disabled,
 
 .caixaLogin input,
 .formulario input,
+.formulario select,
 .formulario textarea {
   width: 100%;
   padding: 14px;
@@ -188,6 +189,7 @@ button:disabled,
 
 .caixaLogin input:focus,
 .formulario input:focus,
+.formulario select:focus,
 .formulario textarea:focus,
 .inputBusca:focus {
   border-color: var(--orange);

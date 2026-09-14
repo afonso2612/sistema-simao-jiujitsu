@@ -806,6 +806,7 @@ function App() {
   const [dataNascimento, setDataNascimento] = useState("");
   const [peso, setPeso] = useState("");
   const [grau, setGrau] = useState("");
+  const [turma, setTurma] = useState("");
   const [mensalidade, setMensalidade] = useState("");
   const [vencimento, setVencimento] = useState("");
   const [tipoSanguineo, setTipoSanguineo] = useState("");
@@ -1582,6 +1583,7 @@ function App() {
     setDataNascimento("");
     setPeso("");
     setGrau("");
+    setTurma("");
     setTipoSanguineo("");
     setSaude("");
     setMedicamentos("");
@@ -1723,6 +1725,7 @@ function App() {
             dataNascimento,
             peso,
             grau,
+            turma,
             tipoSanguineo,
             saude,
             medicamentos,
@@ -1865,6 +1868,7 @@ function App() {
       foto,
 
       grau,
+      turma,
 
       presencas: [],
 
@@ -3395,6 +3399,7 @@ function App() {
     setDataNascimento(aluno.dataNascimento);
     setPeso(aluno.peso);
     setGrau(aluno.grau);
+    setTurma(aluno.turma || "");
     setTipoSanguineo(aluno.tipoSanguineo);
     setSaude(aluno.saude);
     setMedicamentos(aluno.medicamentos);
@@ -3889,6 +3894,13 @@ function App() {
               onChange={(e) => setGrau(e.target.value)}
             />
 
+            <select value={turma} onChange={(e) => setTurma(e.target.value)}>
+              <option value="">Turma</option>
+              <option value="Manhã">Manhã</option>
+              <option value="Tarde">Tarde</option>
+              <option value="Noite">Noite</option>
+            </select>
+
             <input
               type="text"
               inputMode="numeric"
@@ -4075,6 +4087,7 @@ function App() {
                       <p>Nascimento: {formatarData(aluno.dataNascimento) || "Nao informado"}</p>
                       <p>Peso: {aluno.peso || "Nao informado"}</p>
                       <p>Grau: {aluno.grau || "Nao informado"}</p>
+                      <p>Turma: {aluno.turma || "Nao informado"}</p>
                       <p>Inicio: {formatarData(aluno.dataInicio) || "Nao informado"}</p>
                       <p>Responsavel: {aluno.responsavel || "Nao informado"}</p>
                       <p>Tipo sanguineo: {aluno.tipoSanguineo || "Nao informado"}</p>

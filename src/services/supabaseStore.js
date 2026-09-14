@@ -31,6 +31,7 @@ const COLUNAS_ALUNO_LISTA = [
   "telefone",
   "faixa",
   "grau",
+  "turma",
   "responsavel",
   "data_nascimento",
   "data_inicio",
