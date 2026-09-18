@@ -4,11 +4,13 @@ import {
   alunoParaBanco,
   presencaDoBanco,
   presencaParaBanco,
+  atividadeProfessorDoBanco,
+  atividadeProfessorParaBanco,
 } from "./supabaseMappers";
 
 function exigirSupabase() {
   if (!supabaseConfigurado || !supabase) {
-    throw new Error("Supabase ainda não configurado.");
+    throw new Error("Supabase ainda nÃƒÂ£o configurado.");
   }
 }
 
@@ -46,6 +48,7 @@ const COLUNAS_ALUNO_LISTA = [
   "observacoes",
   "observacao_financeira",
   "foto_url",
+  "academia_id",
   "auth_user_id",
 ].join(",");
 
@@ -86,6 +89,11 @@ function alunoOnlineDoBanco(linha) {
   };
 }
 
+export function prepararAlunoRealtimeOnline(linha) {
+  exigirSupabase();
+  return alunoOnlineDoBanco(linha);
+}
+
 async function obterAcademiaAtual() {
   const { data: sessao, error: erroSessao } = await supabase.auth.getSession();
 
@@ -106,6 +114,19 @@ async function obterAcademiaAtual() {
   return data?.academia_id || null;
 }
 
+export async function listarEquipeOnline() {
+  exigirSupabase();
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id,nome,cargo")
+    .in("cargo", ["diretor", "professor"])
+    .order("nome", { ascending: true });
+
+  if (error) throw error;
+
+  return data || [];
+}
 export async function listarAlunosOnline() {
   exigirSupabase();
 
@@ -136,7 +157,7 @@ export async function salvarAlunoOnline(aluno) {
     return supabase
       .from("alunos")
       .upsert(linhaAluno, { onConflict: "id" })
-      .select()
+      .select("id")
       .single();
   }
 
@@ -209,7 +230,7 @@ export async function obterAlunoOnline(id) {
 
   const { data, error } = await supabase
     .from("alunos")
-    .select("*")
+    .select(COLUNAS_ALUNO_LISTA)
     .eq("id", id)
     .single();
 
@@ -222,7 +243,7 @@ export async function obterAlunoDoUsuarioOnline(userId) {
 
   const { data, error } = await supabase
     .from("alunos")
-    .select("*")
+    .select(COLUNAS_ALUNO_LISTA)
     .eq("auth_user_id", userId)
     .maybeSingle();
 
@@ -241,22 +262,6 @@ export async function obterFotoAlunoOnline(id) {
 
   if (error) throw error;
   return fotoPublica(data?.foto_url);
-}
-
-export async function buscarUsuarioSistemaOnline(usuario, senha) {
-  exigirSupabase();
-
-  const { data, error } = await supabase
-    .rpc("verificar_usuario_sistema", {
-      usuario_login: usuario,
-      senha_login: senha,
-    })
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!data) return null;
-
-  return usuarioSistemaDoBanco(data);
 }
 
 export async function salvarUsuarioSistemaOnline(usuario) {
@@ -286,27 +291,22 @@ export async function salvarUsuarioSistemaOnline(usuario) {
       return supabase
         .from("usuarios_sistema")
         .update(linhaUsuario)
-        .eq("id", existente.id)
-        .select()
-        .single();
+        .eq("id", existente.id);
     }
 
     return supabase
       .from("usuarios_sistema")
-      .insert(linhaUsuario)
-      .select()
-      .single();
+      .insert(linhaUsuario);
   }
 
-  let { data, error } = await salvarLinhaUsuario(linha);
+  let { error } = await salvarLinhaUsuario(linha);
 
   if (erroColunaInexistente(error, "academia_id")) {
     delete linha.academia_id;
-    ({ data, error } = await salvarLinhaUsuario(linha));
+    ({ error } = await salvarLinhaUsuario(linha));
   }
 
   if (error) throw error;
-  return data;
 }
 
 export async function removerUsuarioSistemaOnlinePorAluno(idAluno) {
@@ -363,6 +363,27 @@ export async function criarAlunoAuthOnline(idAluno, email, password) {
   return data;
 }
 
+export async function criarProfessorAuthOnline(nome, email, password) {
+  exigirSupabase();
+
+  const { data, error } = await supabase.functions.invoke("create-professor-auth", {
+    body: {
+      nome,
+      email,
+      password,
+    },
+  });
+
+  if (error) {
+    throw new Error(detalharErroSupabase(error) || "Erro desconhecido ao criar acesso Auth do professor.");
+  }
+
+  if (data?.error) {
+    throw new Error(String(data.error));
+  }
+
+  return data;
+}
 export async function atualizarEmailAlunoAuthOnline(idAluno, novoEmail) {
   exigirSupabase();
 
@@ -374,7 +395,24 @@ export async function atualizarEmailAlunoAuthOnline(idAluno, novoEmail) {
   });
 
   if (error) {
-    throw new Error(detalharErroSupabase(error) || "Erro desconhecido ao corrigir e-mail Auth do aluno.");
+    let mensagemErro = "";
+
+    try {
+      const respostaErro = error?.context;
+
+      if (respostaErro && typeof respostaErro.clone === "function") {
+        const corpoErro = await respostaErro.clone().json();
+        mensagemErro = String(corpoErro?.error || "");
+      }
+    } catch {
+      // Se nao for possivel ler o corpo da resposta, usa o erro padrao abaixo.
+    }
+
+    throw new Error(
+      mensagemErro ||
+      detalharErroSupabase(error) ||
+      "Erro desconhecido ao corrigir e-mail Auth do aluno."
+    );
   }
 
   if (data?.error) {
@@ -392,12 +430,37 @@ export async function removerAlunoOnline(id) {
   if (error) throw error;
 }
 
+export async function listarAtividadesProfessoresOnline() {
+  exigirSupabase();
+
+  const { data, error } = await supabase
+    .from("atividades_professores")
+    .select("id,professor_id,observacao,data,criado_em")
+    .order("criado_em", { ascending: false });
+
+  if (error) throw error;
+  return data.map(atividadeProfessorDoBanco);
+}
+
+export async function registrarAtividadeProfessorOnline(atividade) {
+  exigirSupabase();
+
+  const { data, error } = await supabase
+    .from("atividades_professores")
+    .insert(atividadeProfessorParaBanco(atividade))
+    .select("id,professor_id,observacao,data,criado_em")
+    .single();
+
+  if (error) throw error;
+  return atividadeProfessorDoBanco(data);
+}
+
 export async function listarPresencasOnline() {
   exigirSupabase();
 
   const { data, error } = await supabase
     .from("presencas")
-    .select("id,aluno_id,data,hora,criado_em")
+    .select("id,aluno_id,data,hora,criado_em,registrado_por")
     .order("criado_em", { ascending: false });
 
   if (error) throw error;
@@ -419,11 +482,16 @@ export async function listarPagamentosOnline() {
 
   const { data, error } = await supabase
     .from("pagamentos")
-    .select("*")
+    .select("id,aluno_id,valor,status,data_pagamento,comprovante_url,criado_em")
     .order("criado_em", { ascending: false });
 
   if (error) throw error;
   return Promise.all(data.map(pagamentoVisualizavel));
+}
+
+export async function prepararPagamentoRealtimeOnline(pagamento) {
+  exigirSupabase();
+  return pagamentoVisualizavel(pagamento);
 }
 
 export async function listarPagamentosDoAlunoParaScannerOnline(alunoId) {
@@ -432,7 +500,9 @@ export async function listarPagamentosDoAlunoParaScannerOnline(alunoId) {
   const { data, error } = await supabase
     .from("pagamentos")
     .select("status,criado_em,data_pagamento")
-    .eq("aluno_id", alunoId);
+    .eq("aluno_id", alunoId)
+    .order("criado_em", { ascending: false })
+    .limit(1);
 
   if (error) throw error;
   return data;
@@ -458,7 +528,7 @@ export async function registrarPresencaOnline(presenca) {
   const { data, error } = await supabase
     .from("presencas")
     .insert(presencaParaBanco(presenca))
-    .select()
+    .select("id,aluno_id,data,hora,registrado_por")
     .single();
 
   if (error) throw error;
@@ -539,15 +609,12 @@ export async function salvarPagamentoOnline(pagamento) {
 export async function atualizarPagamentoOnlinePorId(id, campos) {
   exigirSupabase();
 
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from("pagamentos")
     .update(campos)
-    .eq("id", id)
-    .select()
-    .single();
+    .eq("id", id);
 
   if (error) throw error;
-  return data;
 }
 
 export async function atualizarStatusFinanceiroAlunoOnline(
@@ -620,8 +687,8 @@ export async function listarAvisosOnline() {
   const { data, error } = await supabase
     .from("avisos")
     .select("id,mensagem,criado_em")
-    .order("criado_em", { ascending: false });
-
+    .order("criado_em", { ascending: false })
+    .limit(5);
   if (error) throw error;
 
   return data.map((aviso) => ({

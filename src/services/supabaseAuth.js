@@ -64,7 +64,7 @@ export async function obterPerfilSupabase(userIdInformado = "") {
 
   const { data, error } = await supabase
     .from("profiles")
-    .select("*")
+    .select("id,nome,cargo,aluno_id,academia_id")
     .eq("id", userId)
     .single();
 

@@ -76,9 +76,26 @@ export function presencaDoBanco(linha) {
     foto: linha.alunos?.foto_url || "",
     data: converterDataISOParaBrasil(linha.data),
     hora: linha.hora || "",
+    registradoPor: linha.registrado_por || null,
   };
 }
 
+export function atividadeProfessorParaBanco(atividade) {
+  return {
+    observacao: atividade.observacao,
+    data: converterDataBrasilParaISO(atividade.data) || new Date().toISOString().slice(0, 10),
+  };
+}
+
+export function atividadeProfessorDoBanco(linha) {
+  return {
+    id: linha.id,
+    professorId: linha.professor_id || null,
+    observacao: linha.observacao || "",
+    data: converterDataISOParaBrasil(linha.data),
+    criadoEm: linha.criado_em || null,
+  };
+}
 function converterDataBrasilParaISO(data) {
   if (!data) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(data)) return data;
@@ -109,3 +126,4 @@ function converterDataISOParaBrasil(data) {
 
   return partes.reverse().join("/");
 }
+
