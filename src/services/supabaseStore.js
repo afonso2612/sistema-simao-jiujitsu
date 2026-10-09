@@ -10,7 +10,7 @@ import {
 
 function exigirSupabase() {
   if (!supabaseConfigurado || !supabase) {
-    throw new Error("Supabase ainda nÃƒÂ£o configurado.");
+    throw new Error("Supabase ainda não configurado.");
   }
 }
 
@@ -37,6 +37,7 @@ const COLUNAS_ALUNO_LISTA = [
   "responsavel",
   "data_nascimento",
   "data_inicio",
+  "inicio_financeiro",
   "peso",
   "mensalidade",
   "vencimento",
@@ -331,7 +332,11 @@ export async function resetarSenhaAlunoAuthOnline(idAluno, senha = "123456") {
   });
 
   if (error) {
-    throw new Error(detalharErroSupabase(error) || "Erro desconhecido ao resetar senha do aluno.");
+    let mensagem = "";
+    try {
+      mensagem = (await error.context?.clone().json())?.error || "";
+    } catch { /* Usa o erro original quando a resposta nao e JSON. */ }
+    throw new Error(mensagem || detalharErroSupabase(error) || "Erro desconhecido ao resetar senha do aluno.");
   }
 
   if (data?.error) {
@@ -482,7 +487,7 @@ export async function listarPagamentosOnline() {
 
   const { data, error } = await supabase
     .from("pagamentos")
-    .select("id,aluno_id,valor,status,data_pagamento,comprovante_url,criado_em")
+    .select("id,aluno_id,valor,status,data_pagamento,comprovante_url,criado_em,competencias_quitadas,detalhamento_mensalidades")
     .order("criado_em", { ascending: false });
 
   if (error) throw error;
@@ -499,10 +504,9 @@ export async function listarPagamentosDoAlunoParaScannerOnline(alunoId) {
 
   const { data, error } = await supabase
     .from("pagamentos")
-    .select("status,criado_em,data_pagamento")
+    .select("status,criado_em,data_pagamento,competencias_quitadas,detalhamento_mensalidades")
     .eq("aluno_id", alunoId)
-    .order("criado_em", { ascending: false })
-    .limit(1);
+    .order("criado_em", { ascending: false });
 
   if (error) throw error;
   return data;
@@ -637,6 +641,21 @@ export async function atualizarStatusFinanceiroAlunoOnline(
 export async function confirmarPagamentoOnline(pagamento) {
   exigirSupabase();
 
+  if (Array.isArray(pagamento.competencias_quitadas)) {
+    const {data, error} = await supabase.rpc("confirmar_mensalidades_acumuladas", {
+      p_aluno_id: pagamento.aluno_id,
+      p_competencias: pagamento.competencias_quitadas,
+      p_valor_esperado: pagamento.valor,
+      p_data_pagamento: pagamento.data_pagamento,
+      p_pagamento_id: pagamento.id || null,
+      p_comprovante: pagamento.comprovante_path || pagamento.comprovante_url || null,
+    });
+    if (error) throw new Error(detalharErroSupabase(error));
+    // A quitação já foi confirmada: falha na prévia não deve sugerir repetir o pagamento.
+    try { return [await pagamentoVisualizavel(data)]; }
+    catch { return [{...data, comprovante_path: data.comprovante_url, comprovante_url: ""}]; }
+  }
+
   if (!pagamento.id) {
     return [
       await salvarPagamentoOnline({
@@ -763,18 +782,6 @@ function dataUrlParaBlob(dataUrl) {
   return new Blob([bytes], { type: tipo });
 }
 
-function usuarioSistemaDoBanco(data) {
-  return {
-    id: data.id,
-    usuario: data.usuario,
-    cargo: data.cargo,
-    nome: data.nome,
-    alunoId: data.aluno_id,
-    academiaId: data.academia_id,
-    origem: "usuarios_sistema",
-  };
-}
-
 async function salvarFotoLinhaNoStorage(linha) {
   if (!String(linha.foto_url || "").startsWith("data:image/")) return;
   if (!idSupabaseValido(linha.id)) return;
@@ -786,4 +793,12 @@ async function salvarFotoLinhaNoStorage(linha) {
 
   await enviarDataUrlOnline("fotos-alunos", caminho, linha.foto_url);
   linha.foto_url = caminho;
+}
+
+export async function cancelarPagamentoAcumuladoOnline(idPagamento) {
+  exigirSupabase();
+  const {data, error} = await supabase.rpc("cancelar_mensalidades_acumuladas", {p_pagamento_id: idPagamento});
+  if (error) throw new Error(detalharErroSupabase(error));
+  try { return await pagamentoVisualizavel(data); }
+  catch { return {...data, comprovante_path: data.comprovante_url, comprovante_url: ""}; }
 }

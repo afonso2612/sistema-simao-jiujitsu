@@ -14,6 +14,9 @@ export function alunoParaBanco(aluno) {
     responsavel: aluno.responsavel || null,
     data_nascimento: converterDataBrasilParaISO(aluno.dataNascimento || aluno.data_nascimento),
     data_inicio: converterDataBrasilParaISO(aluno.dataInicio || aluno.data_inicio),
+    inicio_financeiro: Object.hasOwn(aluno, "inicioFinanceiro") || Object.hasOwn(aluno, "inicio_financeiro")
+      ? aluno.inicioFinanceiro || aluno.inicio_financeiro || null
+      : undefined,
     peso: aluno.peso ? Number(aluno.peso) : null,
     mensalidade: Number(aluno.mensalidade || 0),
     vencimento: aluno.vencimento ? Number(aluno.vencimento) : null,
@@ -41,6 +44,7 @@ export function alunoDoBanco(linha) {
     responsavel: linha.responsavel || "",
     dataNascimento: linha.data_nascimento || "",
     dataInicio: linha.data_inicio || "",
+    inicioFinanceiro: linha.inicio_financeiro || "",
     peso: linha.peso || "",
     mensalidade: Number(linha.mensalidade || 0),
     vencimento: Number(linha.vencimento || 0),

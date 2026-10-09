@@ -1,10 +1,13 @@
 import "./App.css";
+import { dataAtualFinanceira, dataLocalISO, dataDoPagamento, pagamentoPertenceAoMes, statusFinanceiro, diasAtraso, valorComJuros, cobrancaAcumuladaAtiva, mensalidadesEmAberto } from "./services/financeiro.js";
+import ResumoMensalidades, {MesesQuitados} from "./components/ResumoMensalidades.jsx";
 import logo from "./assets/logo.webp";
 import { useState, useEffect, useRef } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import capa from "./assets/capa.webp";
 import jsPDF from "jspdf";
+import { configurarFonteRecibo } from "./services/fonteRecibo";
 import { supabase, supabaseConfigurado } from "./lib/supabaseClient";
 import { atualizarSenhaUsuarioAtual, entrarComEmailSenha, obterPerfilSupabase, obterSessaoSupabase, sairDoSupabase } from "./services/supabaseAuth";
 import {
@@ -13,6 +16,7 @@ import {
   atualizarPagamentoOnlinePorId,
   atualizarStatusFinanceiroAlunoOnline,
   confirmarPagamentoOnline,
+  cancelarPagamentoAcumuladoOnline,
   criarAlunoAuthOnline,
   criarProfessorAuthOnline,
   enviarArquivoOnline,
@@ -39,7 +43,6 @@ import {
   salvarAvisoOnline,
   salvarAlunoOnline,
   salvarPagamentoOnline,
-  salvarUsuarioSistemaOnline,
   verificarPresencaAlunoNaDataOnline,
 } from "./services/supabaseStore";
 
@@ -436,13 +439,24 @@ function dataISOParaBrasil(data) {
   return partes.reverse().join("/");
 }
 
+function dataPagamentoParaBrasil(pagamento) {
+  const data = dataDoPagamento(pagamento);
+  return data ? dataISOParaBrasil(dataLocalISO(data)) : "";
+}
+
+function perfilOnlineValido(perfil) {
+  return Boolean(perfil?.academia_id &&
+    ["diretor", "professor", "aluno"].includes(perfil.cargo) &&
+    (perfil.cargo !== "aluno" || perfil.aluno_id));
+}
+
 function dataPagamentoParaTempo(pagamento) {
   return new Date(pagamento.criado_em || pagamento.data_pagamento || 0).getTime();
 }
 
-function obterUltimoPagamentoDoAluno(pagamentos, idAluno) {
+function obterUltimoPagamentoDoAluno(pagamentos, idAluno, aluno) {
   return pagamentos
-    .filter((pagamento) => String(pagamento.aluno_id) === String(idAluno))
+    .filter((pagamento) => String(pagamento.aluno_id) === String(idAluno) && (cobrancaAcumuladaAtiva(aluno) || pagamentoPertenceAoMes(pagamento)))
     .sort((a, b) => dataPagamentoParaTempo(b) - dataPagamentoParaTempo(a))[0];
 }
 
@@ -560,37 +574,42 @@ function aplicarPagamentosNosAlunos(alunos, pagamentos) {
     const pagos = pagamentosDoAluno
       .filter((pagamento) => pagamento.status === "Pago")
       .sort((a, b) => dataPagamentoParaTempo(b) - dataPagamentoParaTempo(a));
-    const ultimoPagamento = obterUltimoPagamentoDoAluno(pagamentos, aluno.id);
+    const ultimoPagamentoDoMes = pagamentosDoAluno
+      .filter((pagamento) => cobrancaAcumuladaAtiva(aluno) || pagamentoPertenceAoMes(pagamento))
+      .sort((a, b) => dataPagamentoParaTempo(b) - dataPagamentoParaTempo(a))[0];
     const aguardando =
-      ultimoPagamento?.status === "Aguardando" ? ultimoPagamento : null;
-    const comprovanteAtual = ultimoPagamento?.comprovante_url
-      ? ultimoPagamento
+      ultimoPagamentoDoMes?.status === "Aguardando" ? ultimoPagamentoDoMes : null;
+    const comprovanteAtual = ultimoPagamentoDoMes?.comprovante_url
+      ? ultimoPagamentoDoMes
       : null;
     const ultimoPago = pagos[0];
     const statusPagamentoAtual =
-      ultimoPagamento?.status === "Rejeitado"
+      ultimoPagamentoDoMes?.status === "Rejeitado"
         ? "Pendente"
-        : ultimoPagamento?.status || aluno.statusPagamento;
+        : ultimoPagamentoDoMes?.status || "Pendente";
 
     return {
       ...aluno,
+      pagamentosFinanceiros: pagamentosDoAluno,
       statusPagamento: statusPagamentoAtual,
       comprovantePagamento:
         aguardando?.comprovante_url ||
         comprovanteAtual?.comprovante_url ||
-        aluno.comprovantePagamento,
+        "",
       comprovantePagamentoPath:
         aguardando?.comprovante_path ||
         comprovanteAtual?.comprovante_path ||
-        aluno.comprovantePagamentoPath,
+        "",
       dataEnvioComprovante:
         dataISOParaBrasil(aguardando?.data_pagamento) ||
         dataISOParaBrasil(comprovanteAtual?.data_pagamento) ||
-        aluno.dataEnvioComprovante,
-      ultimoPagamento: dataISOParaBrasil(ultimoPago?.data_pagamento) || aluno.ultimoPagamento,
+        "",
+      ultimoPagamento: dataPagamentoParaBrasil(ultimoPago) || aluno.ultimoPagamento,
       historicoPagamentos: pagos.map((pagamento) => ({
-        data: dataISOParaBrasil(pagamento.data_pagamento),
+        data: dataPagamentoParaBrasil(pagamento),
         valor: Number(pagamento.valor || 0),
+        competencias_quitadas: pagamento.competencias_quitadas,
+        detalhamento_mensalidades: pagamento.detalhamento_mensalidades,
       })),
     };
   });
@@ -900,6 +919,8 @@ function App() {
   });
   const [nome, setNome] = useState("");
   const [dataInicio, setDataInicio] = useState("");
+  const [inicioFinanceiro, setInicioFinanceiro] = useState("");
+  const confirmacoesFinanceiras = useRef(new Set());
   const [usuarioAluno, setUsuarioAluno] = useState("");
   const [senhaAluno, setSenhaAluno] = useState("");
   const [emailProfessor, setEmailProfessor] = useState("");
@@ -1166,14 +1187,14 @@ function App() {
           for (let tentativa = 0; tentativa < 3; tentativa += 1) {
             perfil = await obterPerfilSupabase();
 
-            if (perfil?.cargo && perfil?.academia_id) {
+            if (perfilOnlineValido(perfil)) {
               break;
             }
 
             await esperar(350);
           }
 
-          if (perfil?.cargo && perfil?.academia_id) {
+          if (perfilOnlineValido(perfil)) {
             setSessaoSupabasePronta(true);
             aplicarUsuarioLogado({
               id: perfil.id,
@@ -1267,13 +1288,7 @@ function App() {
               listarPagamentosDoAlunoParaScannerOnline(idAlunoQr),
               verificarPresencaAlunoNaDataOnline(idAlunoQr, dataLocalISO),
             ]);
-            const ultimoPagamento = pagamentosDoAluno
-              .sort((a, b) => dataPagamentoParaTempo(b) - dataPagamentoParaTempo(a))[0];
-
-            alunoEncontrado = {
-              ...alunoOnline,
-              statusPagamento: ultimoPagamento?.status || alunoOnline.statusPagamento,
-            };
+            alunoEncontrado = aplicarPagamentosNosAlunos([alunoOnline], pagamentosDoAluno.map((pagamento) => ({...pagamento, aluno_id: idAlunoQr})))[0];
             presencaOnlineJaRegistrada = possuiPresencaHoje;
 
             if (scannerAtivo) {
@@ -1301,18 +1316,8 @@ function App() {
         return;
       }
 
-      const diaVencimento = Number(alunoEncontrado.vencimento || 0);
-
-      if (
-        alunoEncontrado.statusPagamento !== "Pago" &&
-        diaVencimento > 0 &&
-        new Date().getDate() > diaVencimento
-      ) {
-        const multa = 10;
-        const jurosPorDia = 1;
-        const diasAtraso = new Date().getDate() - diaVencimento;
-        const valorAtualizado =
-          Number(alunoEncontrado.mensalidade || 0) + multa + diasAtraso * jurosPorDia;
+      if (statusFinanceiro(alunoEncontrado) === "Vencido") {
+        const valorAtualizado = valorComJuros(alunoEncontrado);
         const valorAtualizadoFormatado = Number(valorAtualizado || 0).toLocaleString("pt-BR", {
           style: "currency",
           currency: "BRL",
@@ -1444,7 +1449,15 @@ function App() {
   }, [tela, alunos, presencas, equipeOnlineLogada]);
 
   useEffect(() => {
+    let dataFinanceira = dataLocalISO();
     const relogio = setInterval(() => {
+      const dataAtual = dataLocalISO();
+      if (dataAtual !== dataFinanceira) {
+        dataFinanceira = dataAtual;
+        setAlunos((atuais) => supabaseConfigurado
+          ? aplicarPagamentosNosAlunos(atuais, pagamentosRef.current)
+          : atuais.map((aluno) => ({ ...aluno, statusPagamento: statusFinanceiro(aluno) === "Pago" ? "Pago" : "Pendente" })));
+      }
       setHoraAtual(new Date().toLocaleTimeString());
     }, 1000);
 
@@ -1611,6 +1624,7 @@ function App() {
               : [],
             statusPagamento: alunoAtual.statusPagamento,
             ultimoPagamento: alunoAtual.ultimoPagamento,
+            pagamentosFinanceiros: alunoAtual.pagamentosFinanceiros,
             historicoPagamentos: Array.isArray(
               alunoAtual.historicoPagamentos
             )
@@ -1878,6 +1892,7 @@ function App() {
   function limparFormulario() {
     setNome("");
     setDataInicio("");
+    setInicioFinanceiro("");
     setUsuarioAluno("");
     setSenhaAluno("");
     setEmailProfessor("");
@@ -2015,6 +2030,16 @@ function App() {
       return;
     }
 
+    if (alunoEditando?.inicioFinanceiro && !inicioFinanceiro) {
+      alert("A cobrança acumulada já foi ativada. Confira as pendências antes de mudar o primeiro mês; não é possível desativá-la apagando este campo.");
+      return;
+    }
+    if (inicioFinanceiro && (!/^\d{4}-(0[1-9]|1[0-2])$/.test(inicioFinanceiro) || Number(inicioFinanceiro.slice(0, 4)) < 1900 || !Number.isInteger(Number(vencimento)) || Number(vencimento) < 1 || Number(vencimento) > 31 || !Number.isFinite(Number(mensalidade)) || Number(mensalidade) < 0)) {
+      alert("Confira o primeiro mês, a mensalidade e o dia de vencimento antes de ativar a cobrança acumulada.");
+      return;
+    }
+    if (inicioFinanceiro && `${inicioFinanceiro}-01` !== (alunoEditando?.inicioFinanceiro || "") && !confirm(`Ativar cobrança acumulada a partir de ${inicioFinanceiro.slice(5)}/${inicioFinanceiro.slice(0, 4)}?\n\nCada mês usa a mensalidade cadastrada de ${formatarMoeda(mensalidade)}, com R$ 10 de multa e R$ 1 por dia após o vencimento. Confira os pagamentos antigos antes de confirmar.`)) return;
+
     setSalvandoAluno(true);
 
     if (alunoEditando) {
@@ -2038,6 +2063,7 @@ function App() {
             observacaoFinanceira,
             foto,
             mensalidade: Number(mensalidade),
+            inicioFinanceiro: inicioFinanceiro ? `${inicioFinanceiro}-01` : "",
             vencimento: Number(vencimento),
             academiaId: aluno.academiaId || usuarioLogado?.academiaId || "",
           };
@@ -2066,6 +2092,7 @@ function App() {
                 statusPagamento: aluno.statusPagamento,
                 ultimoPagamento: aluno.ultimoPagamento,
                 historicoPagamentos: aluno.historicoPagamentos,
+                pagamentosFinanceiros: aluno.pagamentosFinanceiros,
                 comprovantePagamento: aluno.comprovantePagamento,
                 comprovantePagamentoPath: aluno.comprovantePagamentoPath,
                 dataEnvioComprovante: aluno.dataEnvioComprovante,
@@ -2137,6 +2164,7 @@ function App() {
       dataNascimento,
       faixa,
       dataInicio,
+      inicioFinanceiro: inicioFinanceiro ? `${inicioFinanceiro}-01` : "",
 
       usuario: usuarioNormalizado,
       senha: senhaNormalizada,
@@ -2211,6 +2239,48 @@ function App() {
   }
 
   async function marcarComoPago(idAluno) {
+    const alunoAcumulado = alunos.find((a) => String(a.id) === String(idAluno));
+    if (cobrancaAcumuladaAtiva(alunoAcumulado)) {
+      if (confirmacoesFinanceiras.current.has(String(idAluno))) return;
+      const referencia = dataAtualFinanceira();
+      const linhas = mensalidadesEmAberto(alunoAcumulado, referencia);
+      if (!linhas.length) { alert("Nenhuma mensalidade em aberto."); return; }
+      const valor = valorComJuros(alunoAcumulado, referencia);
+      const meses = linhas.map((linha) => linha.competencia);
+      if (!confirm(`Confirma o recebimento integral de ${formatarMoeda(valor)}?\nMeses: ${meses.map((mes) => mes.slice(5) + "/" + mes.slice(0, 4)).join(", ")}\n\nEste pagamento quita todos os meses listados. Confira o comprovante antes de confirmar.`)) return;
+      confirmacoesFinanceiras.current.add(String(idAluno));
+      try {
+        if (supabaseConfigurado && !diretorOnlineLogado) throw new Error("Entre como diretor para confirmar o pagamento.");
+        if (diretorOnlineLogado) {
+          const aguardando = obterUltimoPagamentoDoAluno(pagamentosRef.current, idAluno, alunoAcumulado);
+          const confirmados = await confirmarPagamentoOnline({
+            id: aguardando?.status === "Aguardando" ? aguardando.id : null,
+            aluno_id: idAluno, valor, status: "Pago", data_pagamento: dataLocalISO(referencia),
+            competencias_quitadas: meses,
+            comprovante_path: aguardando?.status === "Aguardando" ? aguardando.comprovante_path : null,
+          });
+          const ids = new Set(confirmados.map((p) => String(p.id)));
+          const atualizados = [...confirmados, ...pagamentosRef.current.filter((p) => !ids.has(String(p.id)))];
+          pagamentosRef.current = atualizados;
+          setPagamentos(atualizados);
+          setAlunos((atuais) => aplicarPagamentosNosAlunos(atuais, atualizados));
+        } else {
+          setAlunos((atuais) => atuais.map((a) => String(a.id) !== String(idAluno) ? a : ({
+            ...a, statusPagamento: "Pago", ultimoPagamento: dataISOParaBrasil(dataLocalISO(referencia)),
+            historicoPagamentos: [...(a.historicoPagamentos || []), {data: dataISOParaBrasil(dataLocalISO(referencia)), valor,
+              competencias_quitadas: meses, detalhamento_mensalidades: linhas}],
+            comprovantePagamento: null, dataEnvioComprovante: "",
+          })));
+        }
+        adicionarAviso(`Pagamento confirmado: ${alunoAcumulado.nome}`);
+        alert("Pagamento confirmado para os meses listados.");
+      } catch (error) {
+        alert(`Não foi possível confirmar o pagamento.\n\n${error.message || "Recarregue os dados e tente novamente."}`);
+      } finally {
+        confirmacoesFinanceiras.current.delete(String(idAluno));
+      }
+      return;
+    }
     const dataPagamento = new Date().toLocaleDateString();
     const novosAlunos = alunos.map((aluno) => {
       if (aluno.id === idAluno) {
@@ -2255,7 +2325,7 @@ function App() {
             aluno_id: idAluno,
             valor: calcularValorComJuros(alunoPago),
             status: "Pago",
-            data_pagamento: new Date().toISOString().slice(0, 10),
+            data_pagamento: dataLocalISO(),
             comprovante_path: alunoPago.comprovantePagamentoPath || alunoPago.comprovantePagamento || null,
           }),
         ]);
@@ -2297,6 +2367,26 @@ function App() {
   }
 
   async function marcarComoPendente(idAluno) {
+    const alunoAcumulado = alunos.find((a) => String(a.id) === String(idAluno));
+    const pagoAcumulado = pagamentos.filter((p) => String(p.aluno_id) === String(idAluno) && p.status === "Pago")
+      .sort((a, b) => dataPagamentoParaTempo(b) - dataPagamentoParaTempo(a))[0];
+    if (Array.isArray(pagoAcumulado?.competencias_quitadas) || (!supabaseConfigurado && cobrancaAcumuladaAtiva(alunoAcumulado))) {
+      if (!confirm("Cancelar o último pagamento? Todos os meses quitados por ele voltarão a ficar em aberto.")) return;
+      try {
+        if (supabaseConfigurado && !diretorOnlineLogado) throw new Error("Entre como diretor para cancelar.");
+        if (diretorOnlineLogado) {
+          const cancelado = await cancelarPagamentoAcumuladoOnline(pagoAcumulado.id);
+          const atualizados = pagamentosRef.current.map((p) => String(p.id) === String(cancelado.id) ? cancelado : p);
+          pagamentosRef.current = atualizados; setPagamentos(atualizados);
+          setAlunos((atuais) => aplicarPagamentosNosAlunos(atuais, atualizados));
+        } else {
+          setAlunos((atuais) => atuais.map((a) => String(a.id) !== String(idAluno) ? a : ({...a,
+            statusPagamento: "Pendente", historicoPagamentos: (a.historicoPagamentos || []).slice(0, -1)})));
+        }
+        alert("Pagamento cancelado; meses reabertos.");
+      } catch (error) { alert(`Não foi possível cancelar.\n\n${error.message}`); }
+      return;
+    }
     const novosAlunos = alunos.map((aluno) => {
       if (aluno.id === idAluno) {
         return {
@@ -2366,7 +2456,7 @@ function App() {
                   ? dataISOParaBrasil(pagamentosPagosRestantes[0].data_pagamento)
                   : "",
                 historicoPagamentos: pagamentosPagosRestantes.map((pagamento) => ({
-                  data: dataISOParaBrasil(pagamento.data_pagamento),
+                  data: dataPagamentoParaBrasil(pagamento),
                   valor: Number(pagamento.valor || 0),
                 })),
               }
@@ -2458,6 +2548,7 @@ function App() {
                 statusPagamento: aluno.statusPagamento,
                 ultimoPagamento: aluno.ultimoPagamento,
                 historicoPagamentos: aluno.historicoPagamentos,
+                pagamentosFinanceiros: aluno.pagamentosFinanceiros,
                 comprovantePagamento: aluno.comprovantePagamento,
                 comprovantePagamentoPath: aluno.comprovantePagamentoPath,
                 dataEnvioComprovante: aluno.dataEnvioComprovante,
@@ -2615,9 +2706,9 @@ function App() {
       try {
         const pagamentoSalvo = await salvarPagamentoOnline({
           aluno_id: idAluno,
-          valor: Number(alunoAtualizado.mensalidade || 0),
+          valor: cobrancaAcumuladaAtiva(alunoAtualizado) ? calcularValorComJuros(alunoAtualizado) : Number(alunoAtualizado.mensalidade || 0),
           status: "Aguardando",
-          data_pagamento: new Date().toISOString().slice(0, 10),
+          data_pagamento: dataLocalISO(),
           comprovante_url: comprovanteParaSalvar,
         });
         setPagamentos((pagamentosAtuais) => {
@@ -2744,6 +2835,7 @@ function App() {
 
   async function gerarReciboPDF(aluno) {
     const doc = new jsPDF();
+    configurarFonteRecibo(doc);
 
     const dataAtual = new Date().toLocaleDateString();
     const dataHistoricoParaTempo = (data) => {
@@ -2808,6 +2900,23 @@ function App() {
 
     doc.text("Assinatura: _______________________________", 20, 130);
 
+    if (ultimoPagamentoRegistrado?.competencias_quitadas?.length) {
+      doc.addPage();
+      doc.text("MESES QUITADOS", 20, 20);
+      let y = 35;
+      const detalhes = ultimoPagamentoRegistrado.detalhamento_mensalidades || [];
+      for (const mes of ultimoPagamentoRegistrado.competencias_quitadas) {
+        if (y > 270) { doc.addPage(); y = 20; }
+        const linha = detalhes.find((item) => item.competencia === mes);
+        const texto = `${mes.slice(5)}/${mes.slice(0, 4)}${linha ? ` - Mensalidade ${formatarMoeda(linha.mensalidade)} | Multa ${formatarMoeda(linha.multa)} | Juros ${formatarMoeda(linha.juros)} | Total ${formatarMoeda(linha.total)}` : ""}`;
+        const partes = doc.splitTextToSize(texto, 170);
+        for (const parte of partes) {
+          if (y > 270) { doc.addPage(); y = 20; }
+          doc.text(parte, 20, y); y += 7;
+        }
+        y += 3;
+      }
+    }
     doc.save(`recibo-${aluno.nome}.pdf`);
   }
 
@@ -3373,7 +3482,7 @@ function App() {
     if (loginEmAndamento) return;
 
     const usuarioDigitado = usuario.trim();
-    const senhaDigitada = senha.trim();
+    const senhaDigitada = senha;
 
     if (!usuarioDigitado || !senhaDigitada) {
       alert("Digite usuário e senha.");
@@ -3386,7 +3495,7 @@ function App() {
     const usuarioLocal = usuarios.find(
       (u) =>
         String(u.usuario || "").trim().toLowerCase() === usuarioDigitado.toLowerCase() &&
-        String(u.senha || "").trim() === senhaDigitada
+        String(u.senha || "") === senhaDigitada
     );
 
     if (usuarioLocal && !supabaseConfigurado) {
@@ -3411,7 +3520,7 @@ function App() {
           "Perfil online demorou demais."
         );
 
-        if (!perfil?.cargo || !perfil?.academia_id) {
+        if (!perfilOnlineValido(perfil)) {
           await sairDoSupabase().catch((error) => {
             console.error("Erro ao encerrar sessao sem perfil online.", error);
           });
@@ -3567,6 +3676,7 @@ function App() {
 
     setNome(aluno.nome);
     setDataInicio(aluno.dataInicio || "");
+    setInicioFinanceiro((aluno.inicioFinanceiro || "").slice(0, 7));
     setUsuarioAluno(usuarioDoAluno?.usuario || aluno.usuario || "");
     setSenhaAluno("");
     setTelefone(aluno.telefone);
@@ -3788,17 +3898,17 @@ function App() {
 
   const pagamentosAguardando = alunos.filter(
     (aluno) => {
-      if (aluno.statusPagamento === "Pago") {
+      if (verificarVencimento(aluno) === "Pago") {
         return false;
       }
 
-      const ultimoPagamento = obterUltimoPagamentoDoAluno(pagamentos, aluno.id);
+      const ultimoPagamento = obterUltimoPagamentoDoAluno(pagamentos, aluno.id, aluno);
 
       if (ultimoPagamento) {
         return ultimoPagamento.status === "Aguardando";
       }
 
-      return aluno.statusPagamento === "Aguardando";
+      return !supabaseConfigurado && aluno.statusPagamento === "Aguardando";
     }
   );
 
@@ -3847,42 +3957,15 @@ function App() {
   }
 
   function verificarVencimento(aluno) {
-    if (!aluno) {
-      return "Pendente";
-    }
-
-    if (aluno.statusPagamento === "Pago") {
-      return "Pago";
-    }
-
-    const hoje = new Date().getDate();
-
-    if (hoje > aluno.vencimento) {
-      return "Vencido";
-    }
-
-    return "Pendente";
+    return statusFinanceiro(aluno);
   }
 
   function calcularDiasAtraso(aluno) {
-    if (verificarVencimento(aluno) !== "Vencido") {
-      return 0;
-    }
-
-    const hoje = new Date().getDate();
-
-    return hoje - aluno.vencimento;
+    return diasAtraso(aluno);
   }
 
   function calcularValorComJuros(aluno) {
-    if (verificarVencimento(aluno) !== "Vencido") {
-      return aluno.mensalidade;
-    }
-
-    const multa = 10;
-    const jurosPorDia = 1;
-
-    return aluno.mensalidade + multa + calcularDiasAtraso(aluno) * jurosPorDia;
+    return valorComJuros(aluno);
   }
 
   function bloquearPresencaSeMensalidadeVencida(aluno) {
@@ -4204,6 +4287,11 @@ function App() {
               value={dataInicio}
               onChange={(e) => setDataInicio(formatarCampoData(e.target.value))}
             />
+
+            <label htmlFor="inicio-financeiro">Primeiro mês da cobrança acumulada</label>
+            <input id="inicio-financeiro" type="month" min="1900-01" value={inicioFinanceiro}
+              onChange={(e) => setInicioFinanceiro(e.target.value)} />
+            <p>Confira o histórico antes de escolher. Em branco, mantém a cobrança somente do mês atual. Cada mês usa a mensalidade cadastrada.</p>
 
             <input
               type="email"
@@ -4648,13 +4736,14 @@ function App() {
                   <h2>{aluno.nome}</h2>
                   <p>Vencimento: dia {aluno.vencimento}</p>
                   <p style={{ color: "#f97316", fontWeight: "bold" }}>
-                    Dias em atraso: {calcularDiasAtraso(aluno)}
+                    Maior atraso (dias): {calcularDiasAtraso(aluno)}
                   </p>
                   <p>Mensalidade: {formatarMoeda(aluno.mensalidade)}</p>
                   <p style={{ color: "#f97316", fontWeight: "bold" }}>
                     Valor atualizado: {formatarMoeda(calcularValorComJuros(aluno))}
                   </p>
 
+                  <ResumoMensalidades aluno={aluno} />
                   <button onClick={() => marcarComoPago(aluno.id)}>
                     Confirmar Pagamento
                   </button>
@@ -4729,6 +4818,7 @@ function App() {
                   </p>
                 )}
 
+                <ResumoMensalidades aluno={aluno} />
                 <p>
                   Último pagamento:{" "}
                   {aluno.ultimoPagamento || "Nenhum pagamento"}
@@ -4780,6 +4870,7 @@ function App() {
                     aluno.historicoPagamentos.map((pagamento, index) => (
                       <p key={index}>
                         📅 {pagamento.data} - {formatarMoeda(pagamento.valor)}
+                        <MesesQuitados pagamento={pagamento} />
                       </p>
                     ))
                   ) : (
@@ -4856,6 +4947,7 @@ function App() {
                     ) || "Não informada"}
                   </p>
                   <p>Valor: {formatarMoeda(pagamento.valor)}</p>
+                  <MesesQuitados pagamento={pagamento} />
                   <p>Status: {pagamento.status || "Pendente"}</p>
                 </div>
               ))
@@ -5353,6 +5445,7 @@ function App() {
               Valor: {formatarMoeda(alunoDoPortal?.mensalidade)}
             </p>
 
+            <ResumoMensalidades aluno={alunoDoPortal} />
             {verificarVencimento(alunoDoPortal) === "Vencido" && (
               <div className="cardAluno">
                 <h3>Mensalidade vencida</h3>
@@ -5361,7 +5454,7 @@ function App() {
                   {formatarMoeda(calcularValorComJuros(alunoDoPortal))}
                 </p>
                 <p>
-                  Dias em atraso: {calcularDiasAtraso(alunoDoPortal)}
+                  Maior atraso (dias): {calcularDiasAtraso(alunoDoPortal)}
                 </p>
               </div>
             )}
@@ -5607,6 +5700,7 @@ function App() {
                   alunoDoPortal.historicoPagamentos.map((pagamento, index) => (
                     <p key={index}>
                       📅 {pagamento.data} - {formatarMoeda(pagamento.valor)}
+                        <MesesQuitados pagamento={pagamento} />
                     </p>
                   ))
                 ) : (

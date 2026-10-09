@@ -85,7 +85,10 @@ Deno.serve(async (req) => {
     }
 
     const alunoId = body.aluno_id;
-    const novaSenha = body.password || "123456";
+    const novaSenha = body.password === undefined ? "123456" : body.password;
+    if (typeof novaSenha !== "string" || novaSenha.length < 6) {
+      return jsonResponse({ error: "A senha deve ter pelo menos 6 caracteres." }, 400);
+    }
 
     if (!alunoId) {
       console.error("reset-student-password", {
@@ -146,7 +149,7 @@ Deno.serve(async (req) => {
 
     const { data: aluno, error: erroAluno } = await supabaseAdmin
       .from("alunos")
-      .select("id,academia_id,auth_user_id")
+      .select("id,nome,academia_id,auth_user_id")
       .eq("id", alunoId)
       .single();
 
@@ -180,6 +183,69 @@ Deno.serve(async (req) => {
         },
       });
       return jsonResponse({ error: "Aluno nao possui conta Supabase Auth vinculada." }, 400);
+    }
+
+    const { data: authAluno, error: erroAuthAluno } =
+      await supabaseAdmin.auth.admin.getUserById(aluno.auth_user_id);
+
+    if (erroAuthAluno && erroAuthAluno.status !== 404 && erroAuthAluno.code !== "user_not_found") {
+      logErro("buscar-auth-user-aluno", erroAuthAluno, { alunoId });
+      return jsonResponse({ error: "Nao foi possivel verificar a conta Auth. Tente novamente." }, 502);
+    }
+    if (erroAuthAluno || !authAluno.user) {
+      logErro("buscar-auth-user-aluno", erroAuthAluno, {
+        alunoId,
+        temAuthUserId: true,
+      });
+      return jsonResponse({
+        error: "O vinculo do aluno aponta para uma conta Auth inexistente. Reative o acesso do aluno."
+      }, 409);
+    }
+
+    // Nunca transforme uma conta de equipe ou de outro aluno em conta deste aluno.
+    const { data: perfilAluno, error: erroPerfilAluno } = await supabaseAdmin
+      .from("profiles")
+      .select("cargo,aluno_id,academia_id")
+      .eq("id", aluno.auth_user_id)
+      .maybeSingle();
+    if (erroPerfilAluno) {
+      return jsonResponse({ error: "Nao foi possivel verificar o perfil do aluno." }, 500);
+    }
+    const { data: outrosVinculos, error: erroVinculos } = await supabaseAdmin
+      .from("alunos")
+      .select("id")
+      .eq("auth_user_id", aluno.auth_user_id)
+      .neq("id", aluno.id);
+    if (erroVinculos) {
+      return jsonResponse({ error: "Nao foi possivel verificar os vinculos da conta." }, 500);
+    }
+    if (outrosVinculos?.length || (perfilAluno && (
+      (perfilAluno.cargo && perfilAluno.cargo !== "aluno") ||
+      (perfilAluno.aluno_id && perfilAluno.aluno_id !== aluno.id) ||
+      (perfilAluno.academia_id && perfilAluno.academia_id !== aluno.academia_id)
+    ))) {
+      return jsonResponse({ error: "Vinculo conflitante. Revise a conta Auth antes de resetar a senha." }, 409);
+    }
+
+    const { error: erroRepararProfile } = await supabaseAdmin
+      .from("profiles")
+      .upsert(
+        {
+          id: aluno.auth_user_id,
+          nome: aluno.nome,
+          cargo: "aluno",
+          aluno_id: aluno.id,
+          academia_id: aluno.academia_id,
+        },
+        { onConflict: "id" }
+      );
+
+    if (erroRepararProfile) {
+      logErro("reparar-profile-aluno", erroRepararProfile, {
+        alunoId,
+        temAuthUserId: true,
+      });
+      return jsonResponse({ error: "Nao foi possivel reparar o perfil online do aluno." }, 500);
     }
 
     const { error: erroReset } = await supabaseAdmin.auth.admin.updateUserById(
