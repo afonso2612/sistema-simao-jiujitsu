@@ -4491,6 +4491,11 @@ function App() {
                   )}
 
                   <p>Mensalidade: {formatarMoeda(aluno.mensalidade)}</p>
+{verificarVencimento(aluno) === "Vencido" && (
+  <p style={{ color: "#f97316", fontWeight: "bold" }}>
+    Total com multa e juros: {formatarMoeda(calcularValorComJuros(aluno))}
+  </p>
+)}
                   <p>
                     Último pagamento:{" "}
                     {aluno.ultimoPagamento || "Nenhum pagamento registrado"}
