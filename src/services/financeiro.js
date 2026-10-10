@@ -84,10 +84,11 @@ export function mensalidadesEmAberto(aluno, referencia = dataAtualFinanceira()) 
     if (pagos.has(competencia)) continue;
     const vencimento = dataVencimentoDoMes(aluno, mes);
     const dias = vencimento ? Math.max(0, (ordinal(referencia) - ordinal(vencimento)) / 86400000) : 0;
-    const multa = dias > 0 ? 10 : 0;
+    const juros = Math.max(0, dias - 5);
+    const multa = juros > 0 ? 10 : 0;
     linhas.push({competencia, vencimento: vencimento ? dataLocalISO(vencimento) : null,
-      mensalidade: centavos / 100, dias_atraso: dias, multa, juros: dias,
-      total: (centavos + multa * 100 + dias * 100) / 100});
+      mensalidade: centavos / 100, dias_atraso: dias, multa, juros,
+      total: (centavos + multa * 100 + juros * 100) / 100});
   }
   return linhas;
 }

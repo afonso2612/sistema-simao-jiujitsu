@@ -56,7 +56,7 @@ test('projeção mantém competências e não libera aluno com mês antigo abert
  const r=contexto.aplicarPagamentosNosAlunos([a],[p])[0];
  assert.deepEqual(JSON.parse(JSON.stringify(r.historicoPagamentos[0].competencias_quitadas)),['2026-10']);
  assert.equal(statusFinanceiro(r,new Date(2026,9,8)),'Vencido');
- assert.equal(valorComJuros(r,new Date(2026,9,8)),143);
+ assert.equal(valorComJuros(r,new Date(2026,9,8)),138);
 });
 async function confirmarAcumulado({aceitar=true,falhar=false}={}) {
  const a={id:'1',nome:'Aluno',mensalidade:100,vencimento:5,inicioFinanceiro:'2026-09-01',pagamentosFinanceiros:[]};
@@ -74,7 +74,7 @@ async function confirmarAcumulado({aceitar=true,falhar=false}={}) {
  await ctx.marcarComoPago('1');return r;
 }
 test('confirmação acumulada quita todos os meses pela RPC e reaproveita comprovante antigo',async()=>{
- const r=await confirmarAcumulado();assert.equal(r.chamadas.length,1);assert.equal(r.chamadas[0].valor,256);
+ const r=await confirmarAcumulado();assert.equal(r.chamadas.length,1);assert.equal(r.chamadas[0].valor,238);
  assert.deepEqual(JSON.parse(JSON.stringify(r.chamadas[0].competencias_quitadas)),['2026-09','2026-10']);
  assert.equal(r.chamadas[0].id,'comprovante');assert.equal(r.chamadas[0].comprovante_path,'arquivo.pdf');
  assert.equal(statusFinanceiro(r.alunos[0],new Date(2026,9,8)),'Pago');

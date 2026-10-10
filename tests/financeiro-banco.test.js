@@ -22,7 +22,9 @@ before(async()=>{
  insert into public.profiles(id,cargo,academia_id) values ('${diretor}','diretor','${academia}'),('${professor}','professor','${academia}'),('${outroDiretor}','diretor','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
  `);
  const sql=fs.readFileSync(new URL('../supabase/migrations/202610090001_financeiro_competencias.sql',import.meta.url),'utf8');
- await db.exec(sql); await db.exec(sql); // DDL pode ser reaplicado sem destruir dados.
+ await db.exec(sql); await db.exec(sql);
+ const tolerancia=fs.readFileSync(new URL('../supabase/migrations/202610100001_tolerancia_cinco_dias.sql',import.meta.url),'utf8');
+ await db.exec(tolerancia); await db.exec(tolerancia); // DDL pode ser reaplicado sem destruir dados.
  referencia=(await db.query("select current_date::text as hoje")).rows[0].hoje;
  inicio=(await db.query("select (date_trunc('month',current_date) - interval '1 month')::date::text as inicio")).rows[0].inicio;
 });
@@ -122,4 +124,17 @@ test('diretor pode confirmar fluxo mensal legado após a proteção nova',async(
   await db.query("update public.pagamentos set status='Pago',data_pagamento=current_date where id=$1",[pid]);
   await db.query("update public.alunos set status_pagamento='Pago',ultimo_pagamento=current_date where id=$1",[id]);
  }finally{await db.exec('reset role')}
+});
+
+test('SQL e JS aplicam tolerancia individual aos 31 vencimentos',async()=>{
+ await usuario(diretor);
+ for(let vencimento=1;vencimento<=31;vencimento++) {
+  const id=await novo();
+  await db.query('update public.alunos set vencimento=$1 where id=$2',[vencimento,id]);
+  const a={mensalidade:100,vencimento,inicioFinanceiro:inicio,pagamentosFinanceiros:[]};
+  const linhas=mensalidadesEmAberto(a,new Date(referencia+'T12:00:00'));
+  const c={meses:linhas.map(l=>l.competencia),valor:linhas.reduce((n,l)=>n+l.total,0)};
+  const p=await confirmar(id,c);
+  assert.deepEqual(p.detalhamento_mensalidades,linhas);
+ }
 });
