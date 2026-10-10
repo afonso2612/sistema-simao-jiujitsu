@@ -4508,8 +4508,7 @@ function App() {
                     }}
                   >
                     {verificarVencimento(aluno) === "Pago"
-                      ? "✅ Pago"
-                      : "❌ Pendente"}
+                      ? "✅ Pago" : verificarVencimento(aluno) === "Vencido" ? "⚠️ Vencido" : "❌ Pendente"}
                   </p>
                   {verificarVencimento(aluno) !== "Pago" ? (
                     <Botao
@@ -5027,8 +5026,7 @@ function App() {
                   Status:
                   {" "}
                   {verificarVencimento(aluno) === "Pago"
-                    ? "✅ Pago"
-                    : "❌ Pendente"}
+                    ? "✅ Pago" : verificarVencimento(aluno) === "Vencido" ? "⚠️ Vencido" : "❌ Pendente"}
                 </p>
 
                 <p>
