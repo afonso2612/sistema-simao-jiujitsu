@@ -100,7 +100,7 @@ export function statusFinanceiro(aluno, referencia = dataAtualFinanceira()) {
     const inicio = aluno?.inicioFinanceiro || aluno?.inicio_financeiro;
     return inicio && inicio.slice(0, 7) > dataLocalISO(referencia).slice(0, 7) ? "Pendente" : "Pago";
   }
-  return linhas.some((linha) => linha.dias_atraso > 0) ? "Vencido" : "Pendente";
+  return linhas.some((linha) => linha.dias_atraso > 5) ? "Vencido" : "Pendente";
 }
 
 export function diasAtraso(aluno, referencia = dataAtualFinanceira()) {
