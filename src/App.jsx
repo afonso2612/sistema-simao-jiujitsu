@@ -1,6 +1,6 @@
 import "./App.css";
 import { dataAtualFinanceira, dataLocalISO, dataDoPagamento, pagamentoPertenceAoMes, statusFinanceiro, diasAtraso, valorComJuros, cobrancaAcumuladaAtiva, mensalidadesEmAberto } from "./services/financeiro.js";
-import ResumoMensalidades, {MesesQuitados} from "./components/ResumoMensalidades.jsx";
+import ResumoMensalidades, { MesesQuitados } from "./components/ResumoMensalidades.jsx";
 import logo from "./assets/logo.webp";
 import { useState, useEffect, useRef } from "react";
 import { QRCodeCanvas } from "qrcode.react";
@@ -1288,7 +1288,7 @@ function App() {
               listarPagamentosDoAlunoParaScannerOnline(idAlunoQr),
               verificarPresencaAlunoNaDataOnline(idAlunoQr, dataLocalISO),
             ]);
-            alunoEncontrado = aplicarPagamentosNosAlunos([alunoOnline], pagamentosDoAluno.map((pagamento) => ({...pagamento, aluno_id: idAlunoQr})))[0];
+            alunoEncontrado = aplicarPagamentosNosAlunos([alunoOnline], pagamentosDoAluno.map((pagamento) => ({ ...pagamento, aluno_id: idAlunoQr })))[0];
             presencaOnlineJaRegistrada = possuiPresencaHoje;
 
             if (scannerAtivo) {
@@ -1559,7 +1559,7 @@ function App() {
   useEffect(() => {
     if (!usuarioOnlineLogado || !supabase) return;
 
-    
+
 
     async function recarregarAlunosComSessaoValida(payload) {
       const sessao = await obterSessaoSupabase();
@@ -1802,7 +1802,7 @@ function App() {
         return;
       }
 
-      
+
     }
 
     async function recarregarAvisosComSessaoValida(payload) {
@@ -1841,7 +1841,7 @@ function App() {
         return;
       }
 
-     
+
     }
 
     const canal = supabase
@@ -2038,7 +2038,7 @@ function App() {
       alert("Confira o primeiro mês, a mensalidade e o dia de vencimento antes de ativar a cobrança acumulada.");
       return;
     }
-    if (inicioFinanceiro && `${inicioFinanceiro}-01` !== (alunoEditando?.inicioFinanceiro || "") && !confirm(`Ativar cobrança acumulada a partir de ${inicioFinanceiro.slice(5)}/${inicioFinanceiro.slice(0, 4)}?\n\nCada mês usa a mensalidade cadastrada de ${formatarMoeda(mensalidade)}, com R$ 10 de multa e R$ 1 por dia após o vencimento. Confira os pagamentos antigos antes de confirmar.`)) return;
+    if (inicioFinanceiro && `${inicioFinanceiro}-01` !== (alunoEditando?.inicioFinanceiro || "") && !confirm(`Ativar cobrança acumulada a partir de ${inicioFinanceiro.slice(5)}/${inicioFinanceiro.slice(0, 4)}?\n\nCada mês usa a mensalidade cadastrada de ${formatarMoeda(mensalidade)}, sem multa e com juros de R$ 1 por dia a partir do sexto dia após o vencimento. Confira os pagamentos antigos antes de confirmar.`)) return;
 
     setSalvandoAluno(true);
 
@@ -2267,8 +2267,10 @@ function App() {
         } else {
           setAlunos((atuais) => atuais.map((a) => String(a.id) !== String(idAluno) ? a : ({
             ...a, statusPagamento: "Pago", ultimoPagamento: dataISOParaBrasil(dataLocalISO(referencia)),
-            historicoPagamentos: [...(a.historicoPagamentos || []), {data: dataISOParaBrasil(dataLocalISO(referencia)), valor,
-              competencias_quitadas: meses, detalhamento_mensalidades: linhas}],
+            historicoPagamentos: [...(a.historicoPagamentos || []), {
+              data: dataISOParaBrasil(dataLocalISO(referencia)), valor,
+              competencias_quitadas: meses, detalhamento_mensalidades: linhas
+            }],
             comprovantePagamento: null, dataEnvioComprovante: "",
           })));
         }
@@ -2380,8 +2382,10 @@ function App() {
           pagamentosRef.current = atualizados; setPagamentos(atualizados);
           setAlunos((atuais) => aplicarPagamentosNosAlunos(atuais, atualizados));
         } else {
-          setAlunos((atuais) => atuais.map((a) => String(a.id) !== String(idAluno) ? a : ({...a,
-            statusPagamento: "Pendente", historicoPagamentos: (a.historicoPagamentos || []).slice(0, -1)})));
+          setAlunos((atuais) => atuais.map((a) => String(a.id) !== String(idAluno) ? a : ({
+            ...a,
+            statusPagamento: "Pendente", historicoPagamentos: (a.historicoPagamentos || []).slice(0, -1)
+          })));
         }
         alert("Pagamento cancelado; meses reabertos.");
       } catch (error) { alert(`Não foi possível cancelar.\n\n${error.message}`); }
@@ -4491,11 +4495,11 @@ function App() {
                   )}
 
                   <p>Mensalidade: {formatarMoeda(aluno.mensalidade)}</p>
-{verificarVencimento(aluno) === "Vencido" && (
-  <p style={{ color: "#f97316", fontWeight: "bold" }}>
-    Total com multa e juros: {formatarMoeda(calcularValorComJuros(aluno))}
-  </p>
-)}
+                  {verificarVencimento(aluno) === "Vencido" && (
+                    <p style={{ color: "#f97316", fontWeight: "bold" }}>
+                      Total com juros: {formatarMoeda(calcularValorComJuros(aluno))}
+                    </p>
+                  )}
                   <p>
                     Último pagamento:{" "}
                     {aluno.ultimoPagamento || "Nenhum pagamento registrado"}
@@ -4818,7 +4822,7 @@ function App() {
 
                 {verificarVencimento(aluno) === "Vencido" && (
                   <p style={{ color: "#f97316", fontWeight: "bold" }}>
-                    Valor com multa e juros: {formatarMoeda(calcularValorComJuros(aluno))}
+                    Valor com juros: {formatarMoeda(calcularValorComJuros(aluno))}
                   </p>
                 )}
 
@@ -5703,7 +5707,7 @@ function App() {
                   alunoDoPortal.historicoPagamentos.map((pagamento, index) => (
                     <p key={index}>
                       📅 {pagamento.data} - {formatarMoeda(pagamento.valor)}
-                        <MesesQuitados pagamento={pagamento} />
+                      <MesesQuitados pagamento={pagamento} />
                     </p>
                   ))
                 ) : (
